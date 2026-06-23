@@ -1,0 +1,752 @@
+<script lang="ts">
+  import { TFile, TFolder, setIcon, Menu } from "obsidian";
+  import type { App, TAbstractFile } from "obsidian";
+  import { sortWithOrder, countFiles, getFileIcon, getVisibleExtSet } from "../utils";
+  import { dragState, createDropIndicator, updateDropIndicator, removeDropIndicator, destroyDropIndicator, clearFolderHighlight, highlightFolder, resolveDropTarget, updatePathsOnMove } from "../drag-state";
+  import type { PluginSettings } from "../settings";
+  import { IconSuggestModal } from "../modal";
+
+  export let app: App;
+  export let file: TAbstractFile;
+  export let depth: number = 0;
+  export let activeFilePath: string = "";
+  export let settings: PluginSettings;
+  export let showHidden: boolean = false;
+  export let refreshKey: number = 0;
+  export let selectedPaths: Set<string> = new Set();
+  export let onSelect: (path: string, shiftKey: boolean, ctrlKey: boolean) => void = () => {};
+  export let onClearSelection: () => void = () => {};
+  export let onSortEnd: (detail: {
+    fromPath: string;
+    toPath: string;
+    oldIndex: number;
+    newIndex: number;
+    itemPath: string;
+  }) => void;
+  export let onUpdateSettings: (s: PluginSettings) => Promise<void>;
+
+  let collapsed = settings.collapsedPaths.includes(file.path);
+  let collapseIconEl: HTMLSpanElement;
+  let typeIconEl: HTMLSpanElement;
+  let editingPath: string | null = null;
+  let renameInputEl: HTMLInputElement | null = null;
+
+  $: if (renameInputEl && editingPath === file.path) {
+    renameInputEl.focus();
+    const dotIdx = !isFolder ? file.name.lastIndexOf(".") : -1;
+    if (dotIdx > 0) {
+      renameInputEl.setSelectionRange(0, dotIdx);
+    } else {
+      renameInputEl.select();
+    }
+  }
+
+  $: isFolder = file instanceof TFolder;
+  $: isArchived = isFolder && settings.archivedPaths.includes(file.path);
+
+  $: hiddenSet = new Set(settings.hiddenPaths);
+  $: isHidden = hiddenSet.has(file.path);
+
+  $: visibleExtSet = getVisibleExtSet(settings.visibleExtensions);
+  $: extHidden = !isFolder && visibleExtSet !== null
+    && !visibleExtSet.has(
+      (() => {
+        const dotIdx = file.name.lastIndexOf(".");
+        return dotIdx >= 0 ? file.name.slice(dotIdx + 1).toLowerCase() : "";
+      })()
+    );
+  $: displayName = extHidden
+    ? file.name.slice(0, file.name.lastIndexOf("."))
+    : file.name;
+
+  $: rawChildren = isFolder && !isArchived
+    ? sortWithOrder([...(file as TFolder).children], settings.orderMap, file.path, refreshKey)
+    : [];
+
+  $: children = showHidden
+    ? rawChildren
+    : rawChildren.filter((c) => !hiddenSet.has(c.path));
+
+  $: fileCount = isArchived && file instanceof TFolder ? countFiles(file) : 0;
+
+  $: iconId = settings.iconMap[file.path]
+    || (isArchived ? "archive"
+      : isFolder ? "folder"
+        : extHidden ? "file-text"
+          : getFileIcon(file.name));
+
+  $: if (typeIconEl) {
+    typeIconEl.innerHTML = "";
+    setIcon(typeIconEl, iconId);
+  }
+
+  $: collapseIconId = settings.folderCollapseIconMap[file.path]?.collapsed || settings.collapseIcon || "chevron-right";
+  $: collapseIconExpandedId = settings.folderCollapseIconMap[file.path]?.expanded || settings.collapseIconExpanded || "chevron-down";
+
+  $: if (collapseIconEl) {
+    collapseIconEl.innerHTML = "";
+    setIcon(collapseIconEl, collapsed ? collapseIconId : collapseIconExpandedId);
+    const color = settings.colorMap[file.path] || "";
+    if (color) {
+      collapseIconEl.style.setProperty("color", color, "important");
+      const svg = collapseIconEl.querySelector("svg");
+      if (svg) {
+        svg.style.setProperty("stroke", color, "important");
+        svg.style.setProperty("fill", "none", "important");
+      }
+    } else {
+      collapseIconEl.style.color = "";
+      const svg = collapseIconEl.querySelector("svg");
+      if (svg) {
+        svg.style.stroke = "";
+        svg.style.fill = "";
+      }
+    }
+    collapseIconEl.style.transition = "transform 100ms ease";
+  }
+
+  $: isActive = !isFolder && file instanceof TFile && file.path === activeFilePath;
+
+  $: iconColor = settings.colorMap[file.path] || undefined;
+
+  $: isMultiSelected = selectedPaths.size > 1 && selectedPaths.has(file.path);
+  $: targetPaths = isMultiSelected ? Array.from(selectedPaths) : [file.path];
+
+  function handleClick(e: MouseEvent) {
+    if (editingPath === file.path) return;
+    if (e.shiftKey || e.ctrlKey) {
+      onSelect(file.path, e.shiftKey, e.ctrlKey);
+      return;
+    }
+    if (file instanceof TFile && file.path === activeFilePath) {
+      onSelect(file.path, false, false);
+    } else if (file instanceof TFile) {
+      onClearSelection();
+      app.workspace.getLeaf().openFile(file);
+    } else {
+      collapsed = !collapsed;
+      saveCollapsedState();
+    }
+  }
+
+  async function saveCollapsedState() {
+    const cp = new Set(settings.collapsedPaths);
+    if (collapsed) {
+      cp.add(file.path);
+    } else {
+      cp.delete(file.path);
+    }
+    settings = { ...settings, collapsedPaths: Array.from(cp) };
+    await onUpdateSettings(settings);
+  }
+
+  function handleRename() {
+    editingPath = file.path;
+  }
+
+  async function saveRename() {
+    if (editingPath !== file.path) return;
+    const newName = renameInputEl?.value.trim();
+    if (!newName || newName === file.name) {
+      editingPath = null;
+      return;
+    }
+    const parentPath = file.parent ? file.parent.path : "";
+    const newPath = parentPath ? `${parentPath}/${newName}` : newName;
+    const oldPath = file.path;
+    const savedSettings = settings;
+    try {
+      settings = updatePathsOnMove(settings, oldPath, newPath);
+      await app.fileManager.renameFile(file, newPath);
+    } catch {
+      settings = savedSettings;
+      editingPath = null;
+      return;
+    }
+    await onUpdateSettings(settings);
+    editingPath = null;
+  }
+
+  function cancelRename() {
+    editingPath = null;
+  }
+
+  function handleRenameKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveRename();
+    } else if (e.key === "Escape") {
+      cancelRename();
+    }
+  }
+
+  function handleDblClick() {
+    if (editingPath === file.path) return;
+    if (isFolder && settings.renameOnDoubleClickFolders) {
+      handleRename();
+    } else if (!isFolder && settings.renameOnDoubleClickFiles) {
+      handleRename();
+    }
+  }
+
+  async function duplicateFolderRecursive(src: TFolder, destPath: string): Promise<void> {
+    await app.vault.createFolder(destPath);
+    for (const child of src.children) {
+      if (child instanceof TFile) {
+        await app.vault.copy(child, `${destPath}/${child.name}`);
+      } else if (child instanceof TFolder) {
+        await duplicateFolderRecursive(child, `${destPath}/${child.name}`);
+      }
+    }
+  }
+
+  const COLOR_PRESETS: { label: string; value: string }[] = [
+    { label: "Red", value: "#e03131" },
+    { label: "Orange", value: "#e8590c" },
+    { label: "Yellow", value: "#f08c00" },
+    { label: "Green", value: "#2f9e44" },
+    { label: "Cyan", value: "#0c8599" },
+    { label: "Blue", value: "#1971c2" },
+    { label: "Purple", value: "#6741d9" },
+    { label: "Pink", value: "#c2255c" },
+    { label: "Default (remove)", value: "" },
+  ];
+
+  const ICON_OPTIONS = [
+    "star", "heart", "flame", "bookmark", "flag",
+    "bell", "alert-circle", "check-circle", "help-circle", "info",
+    "book", "file-text", "code", "terminal",
+    "image", "music", "video", "globe", "feather",
+    "settings", "search", "home", "user", "clock",
+  ];
+
+  function handleContextMenu(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const menu = new Menu();
+
+    if (isFolder && !isArchived) {
+      menu.addItem((item) =>
+        item
+          .setTitle("New note")
+          .setIcon("file-plus")
+          .onClick(async () => {
+            const folder = file as TFolder;
+            const path = app.vault.getAvailablePath(folder.path + "/Untitled", "md");
+            await app.vault.create(path, "");
+            const f = app.vault.getAbstractFileByPath(path);
+            if (f instanceof TFile) {
+              await app.workspace.getLeaf().openFile(f);
+            }
+          })
+      );
+      menu.addItem((item) =>
+        item
+          .setTitle("New folder")
+          .setIcon("folder-plus")
+          .onClick(async () => {
+            const folder = file as TFolder;
+            const path = app.vault.getAvailablePath(folder.path + "/New folder", "");
+            await app.vault.createFolder(path);
+          })
+      );
+      menu.addSeparator();
+      menu.addItem((item) =>
+        item
+          .setTitle("Duplicate")
+          .setIcon("copy")
+          .onClick(async () => {
+            if (file instanceof TFolder) {
+              const parentPath = file.parent?.path || "";
+              let newName = file.name + " (copy)";
+              let newPath = parentPath ? `${parentPath}/${newName}` : newName;
+              let counter = 1;
+              while (app.vault.getAbstractFileByPath(newPath)) {
+                newName = file.name + ` (copy ${counter})`;
+                newPath = parentPath ? `${parentPath}/${newName}` : newName;
+                counter++;
+              }
+              await duplicateFolderRecursive(file, newPath);
+            }
+          })
+      );
+      menu.addSeparator();
+      menu.addItem((item) =>
+        item
+          .setTitle("Rename")
+          .setIcon("pencil")
+          .onClick(handleRename)
+      );
+      menu.addItem((item) =>
+        item
+          .setTitle("Delete")
+          .setIcon("trash-2")
+          .setWarning(true)
+          .onClick(async () => {
+            for (const p of targetPaths) {
+              const f = app.vault.getAbstractFileByPath(p);
+              if (f) await app.vault.delete(f, true);
+            }
+          })
+      );
+      menu.addSeparator();
+    } else if (!isFolder) {
+      menu.addItem((item) =>
+        item
+          .setTitle("Duplicate")
+          .setIcon("copy")
+          .onClick(async () => {
+            if (file instanceof TFile) {
+              await app.fileManager.duplicateFile(file);
+            }
+          })
+      );
+      menu.addSeparator();
+      menu.addItem((item) =>
+        item
+          .setTitle("Rename")
+          .setIcon("pencil")
+          .onClick(handleRename)
+      );
+      menu.addItem((item) =>
+        item
+          .setTitle("Delete")
+          .setIcon("trash-2")
+          .setWarning(true)
+          .onClick(async () => {
+            for (const p of targetPaths) {
+              const f = app.vault.getAbstractFileByPath(p);
+              if (f) await app.vault.delete(f, true);
+            }
+          })
+      );
+      menu.addSeparator();
+    }
+
+    const singleHidden = !isMultiSelected && settings.hiddenPaths.includes(file.path);
+    menu.addItem((item) =>
+      item
+        .setTitle(isMultiSelected ? "Toggle hide" : singleHidden ? "Unhide" : "Hide")
+        .setIcon(isMultiSelected ? "eye" : singleHidden ? "eye" : "eye-off")
+        .onClick(async () => {
+          const next = { ...settings };
+          for (const p of targetPaths) {
+            if (next.hiddenPaths.includes(p)) {
+              next.hiddenPaths = next.hiddenPaths.filter((hp) => hp !== p);
+            } else {
+              next.hiddenPaths = [...next.hiddenPaths, p];
+            }
+          }
+          settings = next;
+          await onUpdateSettings(settings);
+        })
+    );
+
+    const ctxX = event.clientX;
+    const ctxY = event.clientY;
+
+    menu.addSeparator();
+
+    menu.addItem((item) => {
+      item.setTitle("Change color...").setIcon("palette");
+      const submenu = item.setSubmenu();
+      for (const c of COLOR_PRESETS) {
+        submenu.addItem((sub) =>
+          sub
+            .setTitle(c.label)
+            .onClick(async () => {
+              const next = { ...settings };
+              if (c.value) {
+                next.colorMap = { ...next.colorMap, [file.path]: c.value };
+              } else {
+                const cm = { ...next.colorMap };
+                delete cm[file.path];
+                next.colorMap = cm;
+              }
+              settings = next;
+              await onUpdateSettings(settings);
+            })
+        );
+      }
+      if (settings.customColors.length > 0) {
+        submenu.addSeparator();
+        submenu.addItem((sub) => {
+          sub.setTitle("More colors...").setIcon("palette");
+          const subsub = sub.setSubmenu();
+          for (const color of settings.customColors) {
+            subsub.addItem((s) =>
+              s
+                .setTitle(color)
+                .onClick(async () => {
+                  const next = { ...settings };
+                  next.colorMap = { ...next.colorMap, [file.path]: color };
+                  settings = next;
+                  await onUpdateSettings(settings);
+                })
+            );
+          }
+        });
+      }
+    });
+
+    menu.addItem((item) => {
+      item.setTitle("Change icon...").setIcon("image");
+      const submenu = item.setSubmenu();
+      for (const icon of ICON_OPTIONS) {
+        submenu.addItem((sub) =>
+          sub
+            .setTitle(icon)
+            .setIcon(icon)
+            .onClick(async () => {
+              const next = { ...settings };
+              next.iconMap = { ...next.iconMap, [file.path]: icon };
+              settings = next;
+              await onUpdateSettings(settings);
+            })
+        );
+      }
+      submenu.addSeparator();
+      submenu.addItem((sub) =>
+        sub
+          .setTitle("Default (remove)")
+          .setIcon("x")
+          .onClick(async () => {
+            const next = { ...settings };
+            const im = { ...next.iconMap };
+            delete im[file.path];
+            next.iconMap = im;
+            settings = next;
+            await onUpdateSettings(settings);
+          })
+      );
+      submenu.addItem((sub) =>
+        sub
+          .setTitle("More icons...")
+          .setIcon("search")
+          .onClick(() => {
+            new IconSuggestModal(app, (iconName) => {
+              const next = { ...settings };
+              next.iconMap = { ...next.iconMap, [file.path]: iconName };
+              settings = next;
+              onUpdateSettings(settings);
+            }).open();
+          })
+      );
+    });
+
+    if (isFolder) {
+      menu.addItem((item) => {
+        item.setTitle("Set collapse icons...").setIcon("chevrons-right");
+        const submenu = item.setSubmenu();
+
+        const currCollapsed = settings.folderCollapseIconMap[file.path]?.collapsed || settings.collapseIcon || "chevron-right";
+        submenu.addItem((sub) => {
+          sub.setTitle(`Collapsed: ${currCollapsed}`).setIcon(currCollapsed);
+          const subsub = sub.setSubmenu();
+          for (const icon of ICON_OPTIONS) {
+            subsub.addItem((s) =>
+              s
+                .setTitle(icon)
+                .setIcon(icon)
+                .onClick(async () => {
+                  const next = { ...settings };
+                  const fcm = { ...next.folderCollapseIconMap };
+                  const current: { collapsed: string; expanded: string } = fcm[file.path] || { collapsed: "", expanded: "" };
+                  fcm[file.path] = { ...current, collapsed: icon };
+                  next.folderCollapseIconMap = fcm;
+                  settings = next;
+                  await onUpdateSettings(settings);
+                })
+            );
+          }
+          subsub.addItem((s) =>
+            s
+              .setTitle("More...")
+              .setIcon("search")
+              .onClick(() => {
+                new IconSuggestModal(app, (iconName) => {
+                  const next = { ...settings };
+                  const fcm = { ...next.folderCollapseIconMap };
+                  const current: { collapsed: string; expanded: string } = fcm[file.path] || { collapsed: "", expanded: "" };
+                  fcm[file.path] = { ...current, collapsed: iconName };
+                  settings = next;
+                  onUpdateSettings(settings);
+                }).open();
+              })
+          );
+        });
+
+        const currExpanded = settings.folderCollapseIconMap[file.path]?.expanded || settings.collapseIconExpanded || "chevron-down";
+        submenu.addItem((sub) => {
+          sub.setTitle(`Expanded: ${currExpanded}`).setIcon(currExpanded);
+          const subsub = sub.setSubmenu();
+          for (const icon of ICON_OPTIONS) {
+            subsub.addItem((s) =>
+              s
+                .setTitle(icon)
+                .setIcon(icon)
+                .onClick(async () => {
+                  const next = { ...settings };
+                  const fcm = { ...next.folderCollapseIconMap };
+                  const current: { collapsed: string; expanded: string } = fcm[file.path] || { collapsed: "", expanded: "" };
+                  fcm[file.path] = { ...current, expanded: icon };
+                  next.folderCollapseIconMap = fcm;
+                  settings = next;
+                  await onUpdateSettings(settings);
+                })
+            );
+          }
+          subsub.addItem((s) =>
+            s
+              .setTitle("More...")
+              .setIcon("search")
+              .onClick(() => {
+                new IconSuggestModal(app, (iconName) => {
+                  const next = { ...settings };
+                  const fcm = { ...next.folderCollapseIconMap };
+                  const current: { collapsed: string; expanded: string } = fcm[file.path] || { collapsed: "", expanded: "" };
+                  fcm[file.path] = { ...current, expanded: iconName };
+                  settings = next;
+                  onUpdateSettings(settings);
+                }).open();
+              })
+          );
+        });
+
+        submenu.addSeparator();
+        submenu.addItem((sub) =>
+          sub
+            .setTitle("Default (remove)")
+            .setIcon("x")
+            .onClick(async () => {
+              const next = { ...settings };
+              const fcm = { ...next.folderCollapseIconMap };
+              delete fcm[file.path];
+              next.folderCollapseIconMap = fcm;
+              settings = next;
+              await onUpdateSettings(settings);
+            })
+        );
+      });
+    }
+
+    for (const [sectionName, entries] of Object.entries(settings.submenus)) {
+      if (entries.length === 0) continue;
+      menu.addItem((item) => {
+        item.setTitle(sectionName).setIcon("terminal");
+        const sub = item.setSubmenu();
+        for (const cmd of entries) {
+          if (!cmd.commandId) continue;
+          sub.addItem((s) => {
+            s.setTitle(cmd.label);
+            if (cmd.icon) s.setIcon(cmd.icon);
+            s.onClick(() => {
+              app.commands.executeCommandById(cmd.commandId);
+            });
+          });
+        }
+      });
+    }
+
+    if (settings.mainMenuCommands.length > 0) {
+      menu.addSeparator();
+      for (const cmd of settings.mainMenuCommands) {
+        if (!cmd.commandId) continue;
+        menu.addItem((s) => {
+          s.setTitle(cmd.label);
+          if (cmd.icon) s.setIcon(cmd.icon);
+          s.onClick(() => {
+            app.commands.executeCommandById(cmd.commandId);
+          });
+        });
+      }
+    }
+
+    menu.showAtMouseEvent(event);
+  }
+
+  function handleDragStart(e: DragEvent) {
+    const title = e.currentTarget as HTMLElement;
+    const container = title.closest("[data-folder-path]") as HTMLElement | null;
+    const itemEl = title.closest(".nav-folder, .nav-file") as HTMLElement | null;
+    if (!container || !itemEl) return;
+
+    const itemPath = itemEl.dataset.path || "";
+    const fromPath = container.dataset.folderPath || "";
+    const parent = itemEl.parentElement;
+    let oldIndex = -1;
+    if (parent) {
+      const children = Array.from(parent.children);
+      oldIndex = children.indexOf(itemEl);
+    }
+
+    dragState.fromPath = fromPath;
+    dragState.itemPath = itemPath;
+    dragState.oldIndex = oldIndex;
+    dragState.targetFolder = null;
+    dragState.toPath = "";
+    dragState.newIndex = -1;
+
+    e.dataTransfer!.effectAllowed = "move";
+    e.dataTransfer!.setData("text/plain", itemPath);
+
+    const color = settings.colorMap[itemPath] || "var(--text-faint)";
+    createDropIndicator(color);
+  }
+
+  function handleDragOver(e: DragEvent) {
+    e.stopPropagation();
+
+    const target = resolveDropTarget(e.clientX, e.clientY);
+    if (!target) { clearFolderHighlight(); removeDropIndicator(); return; }
+
+    dragState.toPath = target.containerPath;
+    dragState.newIndex = target.newIndex;
+    dragState.targetFolder = target.targetFolder;
+
+    if (target.targetFolder && target.itemEl) {
+      clearFolderHighlight();
+      removeDropIndicator();
+      highlightFolder(target.itemEl);
+      return;
+    }
+
+    const ccEl = e.currentTarget as HTMLElement;
+    const containerFolder = ccEl.closest(".nav-folder") as HTMLElement | null;
+    if (containerFolder && ccEl.offsetHeight > 0) {
+      highlightFolder(containerFolder);
+    } else {
+      clearFolderHighlight();
+    }
+    if (target.itemEl) {
+      updateDropIndicator(target.itemEl, e.clientX, e.clientY);
+    } else {
+      removeDropIndicator();
+    }
+  }
+
+  function handleDrop(e: DragEvent) {
+    e.stopPropagation();
+    destroyDropIndicator();
+
+    const fromPath = dragState.fromPath;
+    const itemPath = dragState.itemPath;
+    const oldIndex = dragState.oldIndex;
+
+    if (dragState.targetFolder) {
+      onSortEnd({ fromPath, toPath: dragState.targetFolder, oldIndex, newIndex: -1, itemPath });
+    } else if (dragState.toPath !== "" || dragState.newIndex >= 0) {
+      onSortEnd({ fromPath, toPath: dragState.toPath, oldIndex, newIndex: dragState.newIndex, itemPath });
+    }
+  }
+
+  function handleDragLeave(e: DragEvent) {
+    const target = e.currentTarget as HTMLElement;
+    const related = e.relatedTarget as HTMLElement | null;
+    if (related && target.contains(related)) return;
+    clearFolderHighlight();
+  }
+
+  function handleDragEnd(e: DragEvent) {
+    destroyDropIndicator();
+  }
+</script>
+
+  {#if isFolder && !isArchived}
+  <div class="nav-folder" data-path={file.path} class:is-collapsed={collapsed} class:is-hidden={isHidden} class:is-selected={selectedPaths.has(file.path)}>
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <div
+      class="nav-folder-title"
+      draggable="true"
+      on:click={handleClick}
+      on:dblclick={handleDblClick}
+      on:contextmenu={handleContextMenu}
+      on:dragstart={handleDragStart}
+      on:dragend={handleDragEnd}
+      style="padding-left: {4 + depth * 20}px;"
+      style:color={settings.colorMap[file.path] || undefined}
+      style:--sn-color={settings.colorMap[file.path] || undefined}
+    >
+      {#if settings.enableCollapseIcons}
+      <span class="nav-folder-collapse-indicator collapse-icon" bind:this={collapseIconEl} />
+      {/if}
+      {#if settings.iconMap[file.path] || !settings.hideDefaultIcons}
+      <span class="nav-file-icon" bind:this={typeIconEl} style:color={iconColor} />
+      {/if}
+      {#if editingPath === file.path}
+      <input class="sn-rename-input" type="text" value={file.name} bind:this={renameInputEl} on:blur={saveRename} on:keydown={handleRenameKeydown} />
+      {:else}
+      <div class="nav-folder-title-content">{file.name}</div>
+      {/if}
+    </div>
+    <div class="nav-folder-children" data-folder-path={file.path} style:--sn-color={settings.colorMap[file.path] || undefined} style:--guide-offset={4 + depth * 20 + 8 + "px"} style:--guide-width={1 / window.devicePixelRatio + "px"} on:dragover|preventDefault={handleDragOver} on:drop={handleDrop} on:dragleave={handleDragLeave}>
+      {#each children as child (child.path)}
+        <svelte:self
+          {app}
+          file={child}
+          depth={depth + 1}
+          {activeFilePath}
+          {settings}
+          {showHidden}
+          {refreshKey}
+          {selectedPaths}
+          {onSelect}
+          {onClearSelection}
+          {onSortEnd}
+          {onUpdateSettings}
+        />
+      {/each}
+    </div>
+  </div>
+{:else if isArchived}
+  <div class="nav-file" data-path={file.path} class:is-hidden={isHidden} class:is-selected={selectedPaths.has(file.path)}>
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <div
+      class="nav-file-title"
+      draggable="true"
+      on:click={handleClick}
+      on:dblclick={handleDblClick}
+      on:contextmenu={handleContextMenu}
+      on:dragstart={handleDragStart}
+      on:dragend={handleDragEnd}
+      style="padding-left: {4 + depth * 20}px;"
+      style:color={settings.colorMap[file.path] || undefined}
+      style:--sn-color={settings.colorMap[file.path] || undefined}
+    >
+      {#if settings.iconMap[file.path] || !settings.hideDefaultIcons}
+      <span class="nav-file-icon" bind:this={typeIconEl} style:color={iconColor} />
+      {/if}
+      {#if editingPath === file.path}
+      <input class="sn-rename-input" type="text" value={file.name} bind:this={renameInputEl} on:blur={saveRename} on:keydown={handleRenameKeydown} />
+      {:else}
+      <div class="nav-file-title-content">{displayName} ({fileCount})</div>
+      {/if}
+    </div>
+  </div>
+{:else}
+  <div class="nav-file" data-path={file.path} class:is-active={isActive} class:is-hidden={isHidden} class:is-selected={selectedPaths.has(file.path)}>
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <div
+      class="nav-file-title"
+      draggable="true"
+      on:click={handleClick}
+      on:dblclick={handleDblClick}
+      on:contextmenu={handleContextMenu}
+      on:dragstart={handleDragStart}
+      on:dragend={handleDragEnd}
+      style="padding-left: {4 + depth * 20}px;"
+      style:color={settings.colorMap[file.path] || undefined}
+      style:--sn-color={settings.colorMap[file.path] || undefined}
+    >
+      {#if settings.iconMap[file.path] || !settings.hideDefaultIcons}
+      <span class="nav-file-icon" bind:this={typeIconEl} style:color={iconColor} />
+      {/if}
+      {#if editingPath === file.path}
+      <input class="sn-rename-input" type="text" value={file.name} bind:this={renameInputEl} on:blur={saveRename} on:keydown={handleRenameKeydown} />
+      {:else}
+      <div class="nav-file-title-content">{displayName}</div>
+      {/if}
+    </div>
+  </div>
+{/if}

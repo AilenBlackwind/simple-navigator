@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Build artifacts (generated; rebuilt with `npm run build`)
+# Note: main.js is kept on purpose so the plugin can be installed without building.
+main.js.map
+
+# Obsidian user data (per-vault, never commit)
+data.json
+
+# Logs / editor
+*.log
+.DS_Store
+.idea/
+.vscode/
