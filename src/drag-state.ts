@@ -104,7 +104,7 @@ export function highlightFolder(el: HTMLElement) {
     if (clampedHeight > 0) {
       const anim = ensureGuideLineEl();
       anim.style.visibility = "visible";
-      anim.style.left = `${Math.round(ccRect.left + guideOffset + 3)}px`;
+      anim.style.left = `${Math.round(ccRect.left + guideOffset)}px`;
       anim.style.top = `${Math.round(clampedTop)}px`;
       anim.style.height = `${Math.round(clampedHeight)}px`;
       anim.style.backgroundColor = snColor || "var(--text-faint)";
@@ -115,6 +115,7 @@ export function highlightFolder(el: HTMLElement) {
 }
 
 export function removeDropIndicator() {
+  stopDragScroll();
   clearFolderHighlight();
   hideGuideLineAnim();
   if (dropIndicatorEl) {
@@ -123,6 +124,7 @@ export function removeDropIndicator() {
 }
 
 export function destroyDropIndicator() {
+  stopDragScroll();
   clearFolderHighlight();
   hideGuideLineAnim();
   if (guideLineAnimEl) {
@@ -165,7 +167,32 @@ export function resolveDropTarget(x: number, y: number): DropTarget | null {
     }
   }
 
-  if (matching.length === 0) return null;
+  if (matching.length === 0) {
+    // Cursor is outside any .nav-folder-children — check if within tree bounds
+    // or the drop-zone buffer above the tree
+    const tr = tree.getBoundingClientRect();
+    const topBoundary = tr.top - DROP_ZONE_BUFFER;
+    if (y >= topBoundary && y <= tr.bottom) {
+      const rootContainer = tree.querySelector<HTMLElement>('.nav-folder-children[data-folder-path=""]');
+      if (rootContainer) {
+        const rootChildren = Array.from(rootContainer.children).filter(
+          (el) => el.classList.contains("nav-folder") || el.classList.contains("nav-file")
+        ) as HTMLElement[];
+        if (rootChildren.length > 0 && y < rootChildren[0].getBoundingClientRect().top) {
+          // Above the first root-level item — insert before it
+          return { itemEl: rootChildren[0], containerPath: "", newIndex: 0, targetFolder: null };
+        }
+        if (rootChildren.length > 0) {
+          const lastRoot = rootChildren[rootChildren.length - 1];
+          if (y > lastRoot.getBoundingClientRect().bottom) {
+            // Below the last root-level item — insert after it
+            return { itemEl: lastRoot, containerPath: "", newIndex: rootChildren.length, targetFolder: null };
+          }
+        }
+      }
+    }
+    return null;
+  }
 
   let container = matching[matching.length - 1].container;
   let rect = matching[matching.length - 1].rect;
@@ -199,7 +226,7 @@ export function resolveDropTarget(x: number, y: number): DropTarget | null {
       const ccGapRect = container.getBoundingClientRect();
       if (y > ccGapRect.top + EDGE && y < ccGapRect.bottom - EDGE) {
         const folderEl = container.closest(".nav-folder") as HTMLElement;
-        if (folderEl && folderEl.dataset.path !== dragState.itemPath) {
+        if (folderEl && folderEl.dataset.path && folderEl.dataset.path !== dragState.itemPath) {
           return { itemEl: folderEl, containerPath, newIndex: -1, targetFolder: containerPath };
         }
       }
@@ -225,7 +252,7 @@ export function resolveDropTarget(x: number, y: number): DropTarget | null {
 
         if (title) {
           const tr = title.getBoundingClientRect();
-          if (y >= tr.top && y <= tr.bottom) {
+    if (y >= tr.top - DROP_ZONE_BUFFER && y <= tr.bottom) {
             const mid = tr.top + tr.height / 2;
             const r = { itemEl: child, containerPath, newIndex: y > mid ? i + 1 : i, targetFolder: null };
             return r;
@@ -265,18 +292,31 @@ export function resolveDropTarget(x: number, y: number): DropTarget | null {
         return { itemEl: child, containerPath, newIndex: i + 1, targetFolder: null };
       }
       const ccFolderEl = container.closest(".nav-folder") as HTMLElement;
-      if (ccFolderEl && ccFolderEl.dataset.path !== dragState.itemPath) {
-        return { itemEl: ccFolderEl, containerPath, newIndex: -1, targetFolder: containerPath };
+        if (ccFolderEl && ccFolderEl.dataset.path && ccFolderEl.dataset.path !== dragState.itemPath) {
+          return { itemEl: ccFolderEl, containerPath, newIndex: -1, targetFolder: containerPath };
+        }
+        return { itemEl: child, containerPath, newIndex: i, targetFolder: null };
       }
-      return { itemEl: child, containerPath, newIndex: i, targetFolder: null };
+    }
+
+    const ccRect2 = container.getBoundingClientRect();
+  const nearEdge2 = y < ccRect2.top + EDGE || y > ccRect2.bottom - EDGE;
+
+  // Root container can't be highlighted as a drop folder, and its 200px bottom
+  // padding breaks the edge check above. If the cursor sits below the last item,
+  // snap the indicator right under it instead of the oversized container rect.
+  if (containerPath === "" && children.length > 0) {
+    const lastChild = children[children.length - 1];
+    if (y >= lastChild.getBoundingClientRect().bottom) {
+      return { itemEl: lastChild, containerPath, newIndex: children.length, targetFolder: null };
     }
   }
 
-  const ccRect2 = container.getBoundingClientRect();
-  const nearEdge2 = y < ccRect2.top + EDGE || y > ccRect2.bottom - EDGE;
   if (!nearEdge2) {
     const folderEl = container.closest(".nav-folder") as HTMLElement;
-    if (folderEl && folderEl.dataset.path !== dragState.itemPath) {
+    // Only a real nested folder (with a path) can be a drop target — never the
+    // root tree, which has no data-path and would break the indicator geometry.
+    if (folderEl && folderEl.dataset.path && folderEl.dataset.path !== dragState.itemPath) {
       return { itemEl: folderEl, containerPath, newIndex: -1, targetFolder: containerPath };
     }
   }
@@ -307,4 +347,49 @@ export function updatePathsOnMove<T extends Record<string, unknown>>(settings: T
     (next as Record<string, unknown>)[arrKey] = (val as string[]).map((p: string) => replace(p));
   }
   return next;
+}
+
+// --- Drag-time scroll support ---
+
+let autoScrollRaf: number | null = null;
+let autoScrollDir = 0;
+export const DROP_ZONE_BUFFER = 60;
+const SCROLL_EDGE = 50;
+const MAX_SCROLL_SPEED = 12;
+
+function autoScrollLoop() {
+  const tree = document.querySelector(".simple-navigator-tree") as HTMLElement | null;
+  if (!tree || autoScrollDir === 0) {
+    autoScrollRaf = null;
+    return;
+  }
+  tree.scrollTop += autoScrollDir * MAX_SCROLL_SPEED;
+  autoScrollRaf = requestAnimationFrame(autoScrollLoop);
+}
+
+export function updateAutoScroll(clientY: number) {
+  const tree = document.querySelector(".simple-navigator-tree") as HTMLElement | null;
+  if (!tree) { stopDragScroll(); return; }
+
+  const rect = tree.getBoundingClientRect();
+  const distTop = clientY - rect.top;
+  const distBottom = rect.bottom - clientY;
+
+  if (distTop < SCROLL_EDGE && tree.scrollTop > 0) {
+    autoScrollDir = -1;
+    if (!autoScrollRaf) autoScrollRaf = requestAnimationFrame(autoScrollLoop);
+  } else if (distBottom < SCROLL_EDGE && tree.scrollTop < tree.scrollHeight - tree.clientHeight) {
+    autoScrollDir = 1;
+    if (!autoScrollRaf) autoScrollRaf = requestAnimationFrame(autoScrollLoop);
+  } else {
+    stopDragScroll();
+  }
+}
+
+function stopDragScroll() {
+  autoScrollDir = 0;
+  if (autoScrollRaf !== null) {
+    cancelAnimationFrame(autoScrollRaf);
+    autoScrollRaf = null;
+  }
 }

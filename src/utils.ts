@@ -1,4 +1,4 @@
-import { TAbstractFile, TFile, TFolder, Vault } from "obsidian";
+import { App, TAbstractFile, TFile, TFolder, Vault, setIcon } from "obsidian";
 import { PluginSettings } from "./settings";
 
 export function sortWithOrder(
@@ -110,6 +110,11 @@ export function cleanUpSettings(
     allPaths.has(p)
   );
 
+  // Archived folders should not have orderMap entries
+  for (const path of settings.archivedPaths) {
+    delete settings.orderMap[path];
+  }
+
   for (const path of Object.keys(settings.colorMap)) {
     if (!allPaths.has(path)) delete settings.colorMap[path];
   }
@@ -136,4 +141,37 @@ export function getVisibleExtSet(
     .map((s) => s.trim().toLowerCase().replace(/^\./, ""))
     .filter((s) => s.length > 0);
   return exts.length > 0 ? new Set(exts) : null;
+}
+
+export const CUSTOM_ICON_PREFIX = "svg::";
+
+// Populated by refreshCustomIcons — maps svg::path → raw SVG content
+export const customSvgContent = new Map<string, string>();
+
+export function isCustomIcon(value: string): boolean {
+  return value.startsWith(CUSTOM_ICON_PREFIX);
+}
+
+export function setCustomIcon(el: HTMLElement, value: string, app: App): void {
+  el.innerHTML = "";
+  if (isCustomIcon(value)) {
+    const svg = customSvgContent.get(value);
+    if (svg) {
+      el.innerHTML = svg;
+      const svgEl = el.querySelector("svg");
+      if (svgEl) {
+        svgEl.style.width = "16px";
+        svgEl.style.height = "16px";
+      }
+      return;
+    }
+  }
+  el.style.display = "";
+  setIcon(el, value);
+  const svgEl = el.querySelector("svg");
+  if (svgEl) {
+    svgEl.style.width = "16px";
+    svgEl.style.height = "16px";
+    svgEl.style.strokeWidth = "2px";
+  }
 }

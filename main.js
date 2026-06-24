@@ -911,46 +911,39 @@ function getFileIcon(name) {
   };
   return (_a = iconMap[ext]) != null ? _a : "file";
 }
-function cleanUpSettings(settings, vault) {
-  const allPaths = new Set(vault.getAllLoadedFiles().map((f) => f.path));
-  for (const parentPath of Object.keys(settings.orderMap)) {
-    if (parentPath && !allPaths.has(parentPath)) {
-      delete settings.orderMap[parentPath];
-      continue;
-    }
-    settings.orderMap[parentPath] = settings.orderMap[parentPath].filter(
-      (name) => {
-        const fullPath = parentPath ? `${parentPath}/${name}` : name;
-        return allPaths.has(fullPath);
-      }
-    );
-  }
-  settings.hiddenPaths = settings.hiddenPaths.filter((p) => allPaths.has(p));
-  settings.archivedPaths = settings.archivedPaths.filter(
-    (p) => allPaths.has(p)
-  );
-  for (const path of Object.keys(settings.colorMap)) {
-    if (!allPaths.has(path))
-      delete settings.colorMap[path];
-  }
-  for (const path of Object.keys(settings.iconMap)) {
-    if (!allPaths.has(path))
-      delete settings.iconMap[path];
-  }
-  for (const path of Object.keys(settings.folderCollapseIconMap)) {
-    if (!allPaths.has(path))
-      delete settings.folderCollapseIconMap[path];
-  }
-  settings.collapsedPaths = settings.collapsedPaths.filter(
-    (p) => allPaths.has(p)
-  );
-  return settings;
-}
 function getVisibleExtSet(extensionsStr) {
   if (!extensionsStr || !extensionsStr.trim())
     return null;
   const exts = extensionsStr.split(",").map((s) => s.trim().toLowerCase().replace(/^\./, "")).filter((s) => s.length > 0);
   return exts.length > 0 ? new Set(exts) : null;
+}
+var CUSTOM_ICON_PREFIX = "svg::";
+var customSvgContent = /* @__PURE__ */ new Map();
+function isCustomIcon(value) {
+  return value.startsWith(CUSTOM_ICON_PREFIX);
+}
+function setCustomIcon(el, value, app) {
+  el.innerHTML = "";
+  if (isCustomIcon(value)) {
+    const svg = customSvgContent.get(value);
+    if (svg) {
+      el.innerHTML = svg;
+      const svgEl2 = el.querySelector("svg");
+      if (svgEl2) {
+        svgEl2.style.width = "16px";
+        svgEl2.style.height = "16px";
+      }
+      return;
+    }
+  }
+  el.style.display = "";
+  (0, import_obsidian.setIcon)(el, value);
+  const svgEl = el.querySelector("svg");
+  if (svgEl) {
+    svgEl.style.width = "16px";
+    svgEl.style.height = "16px";
+    svgEl.style.strokeWidth = "2px";
+  }
 }
 
 // src/drag-state.ts
@@ -1051,7 +1044,7 @@ function highlightFolder(el) {
     if (clampedHeight > 0) {
       const anim = ensureGuideLineEl();
       anim.style.visibility = "visible";
-      anim.style.left = `${Math.round(ccRect.left + guideOffset + 3)}px`;
+      anim.style.left = `${Math.round(ccRect.left + guideOffset)}px`;
       anim.style.top = `${Math.round(clampedTop)}px`;
       anim.style.height = `${Math.round(clampedHeight)}px`;
       anim.style.backgroundColor = snColor || "var(--text-faint)";
@@ -1061,6 +1054,7 @@ function highlightFolder(el) {
   _lastHighlightAt = Date.now();
 }
 function removeDropIndicator() {
+  stopDragScroll();
   clearFolderHighlight();
   hideGuideLineAnim();
   if (dropIndicatorEl) {
@@ -1068,6 +1062,7 @@ function removeDropIndicator() {
   }
 }
 function destroyDropIndicator() {
+  stopDragScroll();
   clearFolderHighlight();
   hideGuideLineAnim();
   if (guideLineAnimEl) {
@@ -1102,8 +1097,28 @@ function resolveDropTarget(x, y) {
       matching.push({ container: c, rect: r });
     }
   }
-  if (matching.length === 0)
+  if (matching.length === 0) {
+    const tr = tree.getBoundingClientRect();
+    const topBoundary = tr.top - DROP_ZONE_BUFFER;
+    if (y >= topBoundary && y <= tr.bottom) {
+      const rootContainer = tree.querySelector('.nav-folder-children[data-folder-path=""]');
+      if (rootContainer) {
+        const rootChildren = Array.from(rootContainer.children).filter(
+          (el) => el.classList.contains("nav-folder") || el.classList.contains("nav-file")
+        );
+        if (rootChildren.length > 0 && y < rootChildren[0].getBoundingClientRect().top) {
+          return { itemEl: rootChildren[0], containerPath: "", newIndex: 0, targetFolder: null };
+        }
+        if (rootChildren.length > 0) {
+          const lastRoot = rootChildren[rootChildren.length - 1];
+          if (y > lastRoot.getBoundingClientRect().bottom) {
+            return { itemEl: lastRoot, containerPath: "", newIndex: rootChildren.length, targetFolder: null };
+          }
+        }
+      }
+    }
     return null;
+  }
   let container = matching[matching.length - 1].container;
   let rect = matching[matching.length - 1].rect;
   const EDGE = 28;
@@ -1131,7 +1146,7 @@ function resolveDropTarget(x, y) {
       const ccGapRect = container.getBoundingClientRect();
       if (y > ccGapRect.top + EDGE && y < ccGapRect.bottom - EDGE) {
         const folderEl = container.closest(".nav-folder");
-        if (folderEl && folderEl.dataset.path !== dragState.itemPath) {
+        if (folderEl && folderEl.dataset.path && folderEl.dataset.path !== dragState.itemPath) {
           return { itemEl: folderEl, containerPath, newIndex: -1, targetFolder: containerPath };
         }
       }
@@ -1153,7 +1168,7 @@ function resolveDropTarget(x, y) {
         const title = child.querySelector(".nav-folder-title");
         if (title) {
           const tr = title.getBoundingClientRect();
-          if (y >= tr.top && y <= tr.bottom) {
+          if (y >= tr.top - DROP_ZONE_BUFFER && y <= tr.bottom) {
             const mid = tr.top + tr.height / 2;
             const r = { itemEl: child, containerPath, newIndex: y > mid ? i + 1 : i, targetFolder: null };
             return r;
@@ -1186,7 +1201,7 @@ function resolveDropTarget(x, y) {
         return { itemEl: child, containerPath, newIndex: i + 1, targetFolder: null };
       }
       const ccFolderEl = container.closest(".nav-folder");
-      if (ccFolderEl && ccFolderEl.dataset.path !== dragState.itemPath) {
+      if (ccFolderEl && ccFolderEl.dataset.path && ccFolderEl.dataset.path !== dragState.itemPath) {
         return { itemEl: ccFolderEl, containerPath, newIndex: -1, targetFolder: containerPath };
       }
       return { itemEl: child, containerPath, newIndex: i, targetFolder: null };
@@ -1194,9 +1209,15 @@ function resolveDropTarget(x, y) {
   }
   const ccRect2 = container.getBoundingClientRect();
   const nearEdge2 = y < ccRect2.top + EDGE || y > ccRect2.bottom - EDGE;
+  if (containerPath === "" && children2.length > 0) {
+    const lastChild = children2[children2.length - 1];
+    if (y >= lastChild.getBoundingClientRect().bottom) {
+      return { itemEl: lastChild, containerPath, newIndex: children2.length, targetFolder: null };
+    }
+  }
   if (!nearEdge2) {
     const folderEl = container.closest(".nav-folder");
-    if (folderEl && folderEl.dataset.path !== dragState.itemPath) {
+    if (folderEl && folderEl.dataset.path && folderEl.dataset.path !== dragState.itemPath) {
       return { itemEl: folderEl, containerPath, newIndex: -1, targetFolder: containerPath };
     }
   }
@@ -1231,9 +1252,1515 @@ function updatePathsOnMove(settings, oldPath, newPath) {
   }
   return next;
 }
+var autoScrollRaf = null;
+var autoScrollDir = 0;
+var DROP_ZONE_BUFFER = 60;
+var SCROLL_EDGE = 50;
+var MAX_SCROLL_SPEED = 12;
+function autoScrollLoop() {
+  const tree = document.querySelector(".simple-navigator-tree");
+  if (!tree || autoScrollDir === 0) {
+    autoScrollRaf = null;
+    return;
+  }
+  tree.scrollTop += autoScrollDir * MAX_SCROLL_SPEED;
+  autoScrollRaf = requestAnimationFrame(autoScrollLoop);
+}
+function updateAutoScroll(clientY) {
+  const tree = document.querySelector(".simple-navigator-tree");
+  if (!tree) {
+    stopDragScroll();
+    return;
+  }
+  const rect = tree.getBoundingClientRect();
+  const distTop = clientY - rect.top;
+  const distBottom = rect.bottom - clientY;
+  if (distTop < SCROLL_EDGE && tree.scrollTop > 0) {
+    autoScrollDir = -1;
+    if (!autoScrollRaf)
+      autoScrollRaf = requestAnimationFrame(autoScrollLoop);
+  } else if (distBottom < SCROLL_EDGE && tree.scrollTop < tree.scrollHeight - tree.clientHeight) {
+    autoScrollDir = 1;
+    if (!autoScrollRaf)
+      autoScrollRaf = requestAnimationFrame(autoScrollLoop);
+  } else {
+    stopDragScroll();
+  }
+}
+function stopDragScroll() {
+  autoScrollDir = 0;
+  if (autoScrollRaf !== null) {
+    cancelAnimationFrame(autoScrollRaf);
+    autoScrollRaf = null;
+  }
+}
 
 // src/modal.ts
 var import_obsidian2 = require("obsidian");
+
+// src/generated/icon-list.ts
+var ICON_LIST = [
+  "a-arrow-down",
+  "a-arrow-up",
+  "a-large-small",
+  "accessibility",
+  "activity",
+  "activity-square",
+  "air-vent",
+  "airplay",
+  "alarm-clock",
+  "alarm-clock-check",
+  "alarm-clock-minus",
+  "alarm-clock-off",
+  "alarm-clock-plus",
+  "alarm-smoke",
+  "album",
+  "alert-circle",
+  "alert-octagon",
+  "alert-triangle",
+  "align-center",
+  "align-center-horizontal",
+  "align-center-vertical",
+  "align-end-horizontal",
+  "align-end-vertical",
+  "align-horizontal-distribute-center",
+  "align-horizontal-distribute-end",
+  "align-horizontal-distribute-start",
+  "align-horizontal-justify-center",
+  "align-horizontal-justify-end",
+  "align-horizontal-justify-start",
+  "align-horizontal-space-around",
+  "align-horizontal-space-between",
+  "align-justify",
+  "align-left",
+  "align-right",
+  "align-start-horizontal",
+  "align-start-vertical",
+  "align-vertical-distribute-center",
+  "align-vertical-distribute-end",
+  "align-vertical-distribute-start",
+  "align-vertical-justify-center",
+  "align-vertical-justify-end",
+  "align-vertical-justify-start",
+  "align-vertical-space-around",
+  "align-vertical-space-between",
+  "ambulance",
+  "ampersand",
+  "ampersands",
+  "anchor",
+  "angry",
+  "annoyed",
+  "antenna",
+  "anvil",
+  "aperture",
+  "app-window",
+  "apple",
+  "archive",
+  "archive-restore",
+  "archive-x",
+  "area-chart",
+  "armchair",
+  "arrow-big-down",
+  "arrow-big-down-dash",
+  "arrow-big-left",
+  "arrow-big-left-dash",
+  "arrow-big-right",
+  "arrow-big-right-dash",
+  "arrow-big-up",
+  "arrow-big-up-dash",
+  "arrow-down",
+  "arrow-down-0-1",
+  "arrow-down-1-0",
+  "arrow-down-a-z",
+  "arrow-down-circle",
+  "arrow-down-from-line",
+  "arrow-down-left",
+  "arrow-down-left-from-circle",
+  "arrow-down-left-from-square",
+  "arrow-down-left-square",
+  "arrow-down-narrow-wide",
+  "arrow-down-right",
+  "arrow-down-right-from-circle",
+  "arrow-down-right-from-square",
+  "arrow-down-right-square",
+  "arrow-down-square",
+  "arrow-down-to-dot",
+  "arrow-down-to-line",
+  "arrow-down-up",
+  "arrow-down-wide-narrow",
+  "arrow-down-z-a",
+  "arrow-left",
+  "arrow-left-circle",
+  "arrow-left-from-line",
+  "arrow-left-right",
+  "arrow-left-square",
+  "arrow-left-to-line",
+  "arrow-right",
+  "arrow-right-circle",
+  "arrow-right-from-line",
+  "arrow-right-left",
+  "arrow-right-square",
+  "arrow-right-to-line",
+  "arrow-up",
+  "arrow-up-0-1",
+  "arrow-up-1-0",
+  "arrow-up-a-z",
+  "arrow-up-circle",
+  "arrow-up-down",
+  "arrow-up-from-dot",
+  "arrow-up-from-line",
+  "arrow-up-left",
+  "arrow-up-left-from-circle",
+  "arrow-up-left-from-square",
+  "arrow-up-left-square",
+  "arrow-up-narrow-wide",
+  "arrow-up-right",
+  "arrow-up-right-from-circle",
+  "arrow-up-right-from-square",
+  "arrow-up-right-square",
+  "arrow-up-square",
+  "arrow-up-to-line",
+  "arrow-up-wide-narrow",
+  "arrow-up-z-a",
+  "arrows-up-from-line",
+  "asterisk",
+  "asterisk-square",
+  "at-sign",
+  "atom",
+  "audio-lines",
+  "audio-waveform",
+  "award",
+  "axe",
+  "axis-3d",
+  "baby",
+  "backpack",
+  "badge",
+  "badge-alert",
+  "badge-cent",
+  "badge-check",
+  "badge-dollar-sign",
+  "badge-euro",
+  "badge-help",
+  "badge-indian-rupee",
+  "badge-info",
+  "badge-japanese-yen",
+  "badge-minus",
+  "badge-percent",
+  "badge-plus",
+  "badge-pound-sterling",
+  "badge-russian-ruble",
+  "badge-swiss-franc",
+  "badge-x",
+  "baggage-claim",
+  "ban",
+  "banana",
+  "banknote",
+  "bar-chart",
+  "bar-chart-2",
+  "bar-chart-3",
+  "bar-chart-4",
+  "bar-chart-big",
+  "bar-chart-horizontal",
+  "bar-chart-horizontal-big",
+  "barcode",
+  "baseline",
+  "bath",
+  "battery",
+  "battery-charging",
+  "battery-full",
+  "battery-low",
+  "battery-medium",
+  "battery-warning",
+  "beaker",
+  "bean",
+  "bean-off",
+  "bed",
+  "bed-double",
+  "bed-single",
+  "beef",
+  "beer",
+  "bell",
+  "bell-dot",
+  "bell-electric",
+  "bell-minus",
+  "bell-off",
+  "bell-plus",
+  "bell-ring",
+  "between-horizontal-end",
+  "between-horizontal-start",
+  "between-vertical-end",
+  "between-vertical-start",
+  "bike",
+  "binary",
+  "biohazard",
+  "bird",
+  "bitcoin",
+  "blend",
+  "blinds",
+  "blocks",
+  "bluetooth",
+  "bluetooth-connected",
+  "bluetooth-off",
+  "bluetooth-searching",
+  "bold",
+  "bolt",
+  "bomb",
+  "bone",
+  "book",
+  "book-a",
+  "book-audio",
+  "book-check",
+  "book-copy",
+  "book-dashed",
+  "book-down",
+  "book-headphones",
+  "book-heart",
+  "book-image",
+  "book-key",
+  "book-lock",
+  "book-marked",
+  "book-minus",
+  "book-open",
+  "book-open-check",
+  "book-open-text",
+  "book-plus",
+  "book-text",
+  "book-type",
+  "book-up",
+  "book-up-2",
+  "book-user",
+  "book-x",
+  "bookmark",
+  "bookmark-check",
+  "bookmark-minus",
+  "bookmark-plus",
+  "bookmark-x",
+  "boom-box",
+  "bot",
+  "bot-message-square",
+  "box",
+  "box-select",
+  "boxes",
+  "braces",
+  "brackets",
+  "brain",
+  "brain-circuit",
+  "brain-cog",
+  "brick-wall",
+  "briefcase",
+  "bring-to-front",
+  "brush",
+  "bug",
+  "bug-off",
+  "bug-play",
+  "building",
+  "building-2",
+  "bus",
+  "bus-front",
+  "cable",
+  "cable-car",
+  "cake",
+  "cake-slice",
+  "calculator",
+  "calendar",
+  "calendar-check",
+  "calendar-check-2",
+  "calendar-clock",
+  "calendar-days",
+  "calendar-fold",
+  "calendar-heart",
+  "calendar-minus",
+  "calendar-minus-2",
+  "calendar-off",
+  "calendar-plus",
+  "calendar-plus-2",
+  "calendar-range",
+  "calendar-search",
+  "calendar-x",
+  "calendar-x-2",
+  "camera",
+  "camera-off",
+  "candlestick-chart",
+  "candy",
+  "candy-cane",
+  "candy-off",
+  "captions",
+  "captions-off",
+  "car",
+  "car-front",
+  "car-taxi-front",
+  "caravan",
+  "carrot",
+  "case-lower",
+  "case-sensitive",
+  "case-upper",
+  "cassette-tape",
+  "cast",
+  "castle",
+  "cat",
+  "cctv",
+  "check",
+  "check-check",
+  "check-circle",
+  "check-circle-2",
+  "check-square",
+  "check-square-2",
+  "chef-hat",
+  "cherry",
+  "chevron-down",
+  "chevron-down-circle",
+  "chevron-down-square",
+  "chevron-first",
+  "chevron-last",
+  "chevron-left",
+  "chevron-left-circle",
+  "chevron-left-square",
+  "chevron-right",
+  "chevron-right-circle",
+  "chevron-right-square",
+  "chevron-up",
+  "chevron-up-circle",
+  "chevron-up-square",
+  "chevrons-down",
+  "chevrons-down-up",
+  "chevrons-left",
+  "chevrons-left-right",
+  "chevrons-right",
+  "chevrons-right-left",
+  "chevrons-up",
+  "chevrons-up-down",
+  "chrome",
+  "church",
+  "cigarette",
+  "cigarette-off",
+  "circle",
+  "circle-dashed",
+  "circle-dollar-sign",
+  "circle-dot",
+  "circle-dot-dashed",
+  "circle-ellipsis",
+  "circle-equal",
+  "circle-fading-plus",
+  "circle-off",
+  "circle-slash",
+  "circle-slash-2",
+  "circle-user",
+  "circle-user-round",
+  "circuit-board",
+  "citrus",
+  "clapperboard",
+  "clipboard",
+  "clipboard-check",
+  "clipboard-copy",
+  "clipboard-list",
+  "clipboard-minus",
+  "clipboard-paste",
+  "clipboard-pen",
+  "clipboard-pen-line",
+  "clipboard-plus",
+  "clipboard-type",
+  "clipboard-x",
+  "clock",
+  "clock-1",
+  "clock-10",
+  "clock-11",
+  "clock-12",
+  "clock-2",
+  "clock-3",
+  "clock-4",
+  "clock-5",
+  "clock-6",
+  "clock-7",
+  "clock-8",
+  "clock-9",
+  "cloud",
+  "cloud-cog",
+  "cloud-drizzle",
+  "cloud-fog",
+  "cloud-hail",
+  "cloud-lightning",
+  "cloud-moon",
+  "cloud-moon-rain",
+  "cloud-off",
+  "cloud-rain",
+  "cloud-rain-wind",
+  "cloud-snow",
+  "cloud-sun",
+  "cloud-sun-rain",
+  "cloudy",
+  "clover",
+  "club",
+  "code",
+  "code-2",
+  "code-square",
+  "codepen",
+  "codesandbox",
+  "coffee",
+  "cog",
+  "coins",
+  "columns-2",
+  "columns-3",
+  "columns-4",
+  "combine",
+  "command",
+  "compass",
+  "component",
+  "computer",
+  "concierge-bell",
+  "cone",
+  "construction",
+  "contact",
+  "contact-2",
+  "container",
+  "contrast",
+  "cookie",
+  "cooking-pot",
+  "copy",
+  "copy-check",
+  "copy-minus",
+  "copy-plus",
+  "copy-slash",
+  "copy-x",
+  "copyleft",
+  "copyright",
+  "corner-down-left",
+  "corner-down-right",
+  "corner-left-down",
+  "corner-left-up",
+  "corner-right-down",
+  "corner-right-up",
+  "corner-up-left",
+  "corner-up-right",
+  "cpu",
+  "creative-commons",
+  "credit-card",
+  "croissant",
+  "crop",
+  "cross",
+  "crosshair",
+  "crown",
+  "cuboid",
+  "cup-soda",
+  "currency",
+  "cylinder",
+  "database",
+  "database-backup",
+  "database-zap",
+  "delete",
+  "dessert",
+  "diameter",
+  "diamond",
+  "dice-1",
+  "dice-2",
+  "dice-3",
+  "dice-4",
+  "dice-5",
+  "dice-6",
+  "dices",
+  "diff",
+  "disc",
+  "disc-2",
+  "disc-3",
+  "disc-album",
+  "divide",
+  "divide-circle",
+  "divide-square",
+  "dna",
+  "dna-off",
+  "dog",
+  "dollar-sign",
+  "donut",
+  "door-closed",
+  "door-open",
+  "dot",
+  "dot-square",
+  "download",
+  "download-cloud",
+  "drafting-compass",
+  "drama",
+  "dribbble",
+  "drill",
+  "droplet",
+  "droplets",
+  "drum",
+  "drumstick",
+  "dumbbell",
+  "ear",
+  "ear-off",
+  "earth",
+  "earth-lock",
+  "eclipse",
+  "egg",
+  "egg-fried",
+  "egg-off",
+  "equal",
+  "equal-not",
+  "equal-square",
+  "eraser",
+  "euro",
+  "expand",
+  "external-link",
+  "eye",
+  "eye-off",
+  "facebook",
+  "factory",
+  "fan",
+  "fast-forward",
+  "feather",
+  "fence",
+  "ferris-wheel",
+  "figma",
+  "file",
+  "file-archive",
+  "file-audio",
+  "file-audio-2",
+  "file-axis-3d",
+  "file-badge",
+  "file-badge-2",
+  "file-bar-chart",
+  "file-bar-chart-2",
+  "file-box",
+  "file-check",
+  "file-check-2",
+  "file-clock",
+  "file-code",
+  "file-code-2",
+  "file-cog",
+  "file-diff",
+  "file-digit",
+  "file-down",
+  "file-heart",
+  "file-image",
+  "file-input",
+  "file-json",
+  "file-json-2",
+  "file-key",
+  "file-key-2",
+  "file-line-chart",
+  "file-lock",
+  "file-lock-2",
+  "file-minus",
+  "file-minus-2",
+  "file-music",
+  "file-output",
+  "file-pen",
+  "file-pen-line",
+  "file-pie-chart",
+  "file-plus",
+  "file-plus-2",
+  "file-question",
+  "file-scan",
+  "file-search",
+  "file-search-2",
+  "file-sliders",
+  "file-spreadsheet",
+  "file-stack",
+  "file-symlink",
+  "file-terminal",
+  "file-text",
+  "file-type",
+  "file-type-2",
+  "file-up",
+  "file-video",
+  "file-video-2",
+  "file-volume",
+  "file-volume-2",
+  "file-warning",
+  "file-x",
+  "file-x-2",
+  "files",
+  "film",
+  "filter",
+  "filter-x",
+  "fingerprint",
+  "fire-extinguisher",
+  "fish",
+  "fish-off",
+  "fish-symbol",
+  "flag",
+  "flag-off",
+  "flag-triangle-left",
+  "flag-triangle-right",
+  "flame",
+  "flame-kindling",
+  "flashlight",
+  "flashlight-off",
+  "flask-conical",
+  "flask-conical-off",
+  "flask-round",
+  "flip-horizontal",
+  "flip-horizontal-2",
+  "flip-vertical",
+  "flip-vertical-2",
+  "flower",
+  "flower-2",
+  "focus",
+  "fold-horizontal",
+  "fold-vertical",
+  "folder",
+  "folder-archive",
+  "folder-check",
+  "folder-clock",
+  "folder-closed",
+  "folder-cog",
+  "folder-dot",
+  "folder-down",
+  "folder-git",
+  "folder-git-2",
+  "folder-heart",
+  "folder-input",
+  "folder-kanban",
+  "folder-key",
+  "folder-lock",
+  "folder-minus",
+  "folder-open",
+  "folder-open-dot",
+  "folder-output",
+  "folder-pen",
+  "folder-plus",
+  "folder-root",
+  "folder-search",
+  "folder-search-2",
+  "folder-symlink",
+  "folder-sync",
+  "folder-tree",
+  "folder-up",
+  "folder-x",
+  "folders",
+  "footprints",
+  "forklift",
+  "form-input",
+  "forward",
+  "frame",
+  "framer",
+  "frown",
+  "fuel",
+  "fullscreen",
+  "function-square",
+  "gallery-horizontal",
+  "gallery-horizontal-end",
+  "gallery-thumbnails",
+  "gallery-vertical",
+  "gallery-vertical-end",
+  "gamepad",
+  "gamepad-2",
+  "gantt-chart",
+  "gantt-chart-square",
+  "gauge",
+  "gauge-circle",
+  "gavel",
+  "gem",
+  "ghost",
+  "gift",
+  "git-branch",
+  "git-branch-plus",
+  "git-commit-horizontal",
+  "git-commit-vertical",
+  "git-compare",
+  "git-compare-arrows",
+  "git-fork",
+  "git-graph",
+  "git-merge",
+  "git-pull-request",
+  "git-pull-request-arrow",
+  "git-pull-request-closed",
+  "git-pull-request-create",
+  "git-pull-request-create-arrow",
+  "git-pull-request-draft",
+  "github",
+  "gitlab",
+  "glass-water",
+  "glasses",
+  "globe",
+  "globe-lock",
+  "goal",
+  "grab",
+  "graduation-cap",
+  "grape",
+  "grid-2x2",
+  "grid-3x3",
+  "grip",
+  "grip-horizontal",
+  "grip-vertical",
+  "group",
+  "guitar",
+  "hammer",
+  "hand",
+  "hand-coins",
+  "hand-heart",
+  "hand-helping",
+  "hand-metal",
+  "hand-platter",
+  "handshake",
+  "hard-drive",
+  "hard-drive-download",
+  "hard-drive-upload",
+  "hard-hat",
+  "hash",
+  "haze",
+  "hdmi-port",
+  "heading",
+  "heading-1",
+  "heading-2",
+  "heading-3",
+  "heading-4",
+  "heading-5",
+  "heading-6",
+  "headphones",
+  "headset",
+  "heart",
+  "heart-crack",
+  "heart-handshake",
+  "heart-off",
+  "heart-pulse",
+  "heater",
+  "help-circle",
+  "hexagon",
+  "highlighter",
+  "history",
+  "home",
+  "hop",
+  "hop-off",
+  "hotel",
+  "hourglass",
+  "ice-cream",
+  "ice-cream-2",
+  "image",
+  "image-down",
+  "image-minus",
+  "image-off",
+  "image-plus",
+  "image-up",
+  "images",
+  "import",
+  "inbox",
+  "indent",
+  "indian-rupee",
+  "infinity",
+  "info",
+  "inspection-panel",
+  "instagram",
+  "italic",
+  "iteration-ccw",
+  "iteration-cw",
+  "japanese-yen",
+  "joystick",
+  "kanban",
+  "kanban-square",
+  "kanban-square-dashed",
+  "key",
+  "key-round",
+  "key-square",
+  "keyboard",
+  "keyboard-music",
+  "lamp",
+  "lamp-ceiling",
+  "lamp-desk",
+  "lamp-floor",
+  "lamp-wall-down",
+  "lamp-wall-up",
+  "land-plot",
+  "landmark",
+  "languages",
+  "laptop",
+  "laptop-2",
+  "lasso",
+  "lasso-select",
+  "laugh",
+  "layers",
+  "layers-2",
+  "layers-3",
+  "layout-dashboard",
+  "layout-grid",
+  "layout-list",
+  "layout-panel-left",
+  "layout-panel-top",
+  "layout-template",
+  "leaf",
+  "leafy-green",
+  "library",
+  "library-big",
+  "library-square",
+  "life-buoy",
+  "ligature",
+  "lightbulb",
+  "lightbulb-off",
+  "line-chart",
+  "link",
+  "link-2",
+  "link-2-off",
+  "linkedin",
+  "list",
+  "list-checks",
+  "list-collapse",
+  "list-end",
+  "list-filter",
+  "list-minus",
+  "list-music",
+  "list-ordered",
+  "list-plus",
+  "list-restart",
+  "list-start",
+  "list-todo",
+  "list-tree",
+  "list-video",
+  "list-x",
+  "loader",
+  "loader-2",
+  "locate",
+  "locate-fixed",
+  "locate-off",
+  "lock",
+  "lock-keyhole",
+  "log-in",
+  "log-out",
+  "lollipop",
+  "luggage",
+  "m-square",
+  "magnet",
+  "mail",
+  "mail-check",
+  "mail-minus",
+  "mail-open",
+  "mail-plus",
+  "mail-question",
+  "mail-search",
+  "mail-warning",
+  "mail-x",
+  "mailbox",
+  "mails",
+  "map",
+  "map-pin",
+  "map-pin-off",
+  "map-pinned",
+  "martini",
+  "maximize",
+  "maximize-2",
+  "medal",
+  "megaphone",
+  "megaphone-off",
+  "meh",
+  "memory-stick",
+  "menu",
+  "menu-square",
+  "merge",
+  "message-circle",
+  "message-circle-code",
+  "message-circle-dashed",
+  "message-circle-heart",
+  "message-circle-more",
+  "message-circle-off",
+  "message-circle-plus",
+  "message-circle-question",
+  "message-circle-reply",
+  "message-circle-warning",
+  "message-circle-x",
+  "message-square",
+  "message-square-code",
+  "message-square-dashed",
+  "message-square-diff",
+  "message-square-dot",
+  "message-square-heart",
+  "message-square-more",
+  "message-square-off",
+  "message-square-plus",
+  "message-square-quote",
+  "message-square-reply",
+  "message-square-share",
+  "message-square-text",
+  "message-square-warning",
+  "message-square-x",
+  "messages-square",
+  "mic",
+  "mic-2",
+  "mic-off",
+  "microscope",
+  "microwave",
+  "milestone",
+  "milk",
+  "milk-off",
+  "minimize",
+  "minimize-2",
+  "minus",
+  "minus-circle",
+  "minus-square",
+  "monitor",
+  "monitor-check",
+  "monitor-dot",
+  "monitor-down",
+  "monitor-off",
+  "monitor-pause",
+  "monitor-play",
+  "monitor-smartphone",
+  "monitor-speaker",
+  "monitor-stop",
+  "monitor-up",
+  "monitor-x",
+  "moon",
+  "moon-star",
+  "more-horizontal",
+  "more-vertical",
+  "mountain",
+  "mountain-snow",
+  "mouse",
+  "mouse-pointer",
+  "mouse-pointer-2",
+  "mouse-pointer-click",
+  "mouse-pointer-square",
+  "mouse-pointer-square-dashed",
+  "move",
+  "move-3d",
+  "move-diagonal",
+  "move-diagonal-2",
+  "move-down",
+  "move-down-left",
+  "move-down-right",
+  "move-horizontal",
+  "move-left",
+  "move-right",
+  "move-up",
+  "move-up-left",
+  "move-up-right",
+  "move-vertical",
+  "music",
+  "music-2",
+  "music-3",
+  "music-4",
+  "navigation",
+  "navigation-2",
+  "navigation-2-off",
+  "navigation-off",
+  "network",
+  "newspaper",
+  "nfc",
+  "notebook",
+  "notebook-pen",
+  "notebook-tabs",
+  "notebook-text",
+  "notepad-text",
+  "notepad-text-dashed",
+  "nut",
+  "nut-off",
+  "octagon",
+  "option",
+  "orbit",
+  "outdent",
+  "package",
+  "package-2",
+  "package-check",
+  "package-minus",
+  "package-open",
+  "package-plus",
+  "package-search",
+  "package-x",
+  "paint-bucket",
+  "paint-roller",
+  "paintbrush",
+  "paintbrush-2",
+  "palette",
+  "palmtree",
+  "panel-bottom",
+  "panel-bottom-close",
+  "panel-bottom-dashed",
+  "panel-bottom-open",
+  "panel-left",
+  "panel-left-close",
+  "panel-left-dashed",
+  "panel-left-open",
+  "panel-right",
+  "panel-right-close",
+  "panel-right-dashed",
+  "panel-right-open",
+  "panel-top",
+  "panel-top-close",
+  "panel-top-dashed",
+  "panel-top-open",
+  "panels-left-bottom",
+  "panels-right-bottom",
+  "panels-top-left",
+  "paperclip",
+  "parentheses",
+  "parking-circle",
+  "parking-circle-off",
+  "parking-meter",
+  "parking-square",
+  "parking-square-off",
+  "party-popper",
+  "pause",
+  "pause-circle",
+  "pause-octagon",
+  "paw-print",
+  "pc-case",
+  "pen",
+  "pen-line",
+  "pen-tool",
+  "pencil",
+  "pencil-line",
+  "pencil-ruler",
+  "pentagon",
+  "percent",
+  "percent-circle",
+  "percent-diamond",
+  "percent-square",
+  "person-standing",
+  "phone",
+  "phone-call",
+  "phone-forwarded",
+  "phone-incoming",
+  "phone-missed",
+  "phone-off",
+  "phone-outgoing",
+  "pi",
+  "pi-square",
+  "piano",
+  "pickaxe",
+  "picture-in-picture",
+  "picture-in-picture-2",
+  "pie-chart",
+  "piggy-bank",
+  "pilcrow",
+  "pilcrow-square",
+  "pill",
+  "pin",
+  "pin-off",
+  "pipette",
+  "pizza",
+  "plane",
+  "plane-landing",
+  "plane-takeoff",
+  "play",
+  "play-circle",
+  "play-square",
+  "plug",
+  "plug-2",
+  "plug-zap",
+  "plug-zap-2",
+  "plus",
+  "plus-circle",
+  "plus-square",
+  "pocket",
+  "pocket-knife",
+  "podcast",
+  "pointer",
+  "pointer-off",
+  "popcorn",
+  "popsicle",
+  "pound-sterling",
+  "power",
+  "power-circle",
+  "power-off",
+  "power-square",
+  "presentation",
+  "printer",
+  "projector",
+  "puzzle",
+  "pyramid",
+  "qr-code",
+  "quote",
+  "rabbit",
+  "radar",
+  "radiation",
+  "radical",
+  "radio",
+  "radio-receiver",
+  "radio-tower",
+  "radius",
+  "rail-symbol",
+  "rainbow",
+  "rat",
+  "ratio",
+  "receipt",
+  "receipt-cent",
+  "receipt-euro",
+  "receipt-indian-rupee",
+  "receipt-japanese-yen",
+  "receipt-pound-sterling",
+  "receipt-russian-ruble",
+  "receipt-swiss-franc",
+  "receipt-text",
+  "rectangle-horizontal",
+  "rectangle-vertical",
+  "recycle",
+  "redo",
+  "redo-2",
+  "redo-dot",
+  "refresh-ccw",
+  "refresh-ccw-dot",
+  "refresh-cw",
+  "refresh-cw-off",
+  "refrigerator",
+  "regex",
+  "remove-formatting",
+  "repeat",
+  "repeat-1",
+  "repeat-2",
+  "replace",
+  "replace-all",
+  "reply",
+  "reply-all",
+  "rewind",
+  "ribbon",
+  "rocket",
+  "rocking-chair",
+  "roller-coaster",
+  "rotate-3d",
+  "rotate-ccw",
+  "rotate-cw",
+  "route",
+  "route-off",
+  "router",
+  "rows-2",
+  "rows-3",
+  "rows-4",
+  "rss",
+  "ruler",
+  "russian-ruble",
+  "sailboat",
+  "salad",
+  "sandwich",
+  "satellite",
+  "satellite-dish",
+  "save",
+  "save-all",
+  "scale",
+  "scale-3d",
+  "scaling",
+  "scan",
+  "scan-barcode",
+  "scan-eye",
+  "scan-face",
+  "scan-line",
+  "scan-search",
+  "scan-text",
+  "scatter-chart",
+  "school",
+  "school-2",
+  "scissors",
+  "scissors-line-dashed",
+  "scissors-square",
+  "scissors-square-dashed-bottom",
+  "screen-share",
+  "screen-share-off",
+  "scroll",
+  "scroll-text",
+  "search",
+  "search-check",
+  "search-code",
+  "search-slash",
+  "search-x",
+  "send",
+  "send-horizontal",
+  "send-to-back",
+  "separator-horizontal",
+  "separator-vertical",
+  "server",
+  "server-cog",
+  "server-crash",
+  "server-off",
+  "settings",
+  "settings-2",
+  "shapes",
+  "share",
+  "share-2",
+  "sheet",
+  "shell",
+  "shield",
+  "shield-alert",
+  "shield-ban",
+  "shield-check",
+  "shield-ellipsis",
+  "shield-half",
+  "shield-minus",
+  "shield-off",
+  "shield-plus",
+  "shield-question",
+  "shield-x",
+  "ship",
+  "ship-wheel",
+  "shirt",
+  "shopping-bag",
+  "shopping-basket",
+  "shopping-cart",
+  "shovel",
+  "shower-head",
+  "shrink",
+  "shrub",
+  "shuffle",
+  "sigma",
+  "sigma-square",
+  "signal",
+  "signal-high",
+  "signal-low",
+  "signal-medium",
+  "signal-zero",
+  "signpost",
+  "signpost-big",
+  "siren",
+  "skip-back",
+  "skip-forward",
+  "skull",
+  "slack",
+  "slash",
+  "slash-square",
+  "slice",
+  "sliders",
+  "sliders-horizontal",
+  "smartphone",
+  "smartphone-charging",
+  "smartphone-nfc",
+  "smile",
+  "smile-plus",
+  "snail",
+  "snowflake",
+  "sofa",
+  "soup",
+  "space",
+  "spade",
+  "sparkle",
+  "sparkles",
+  "speaker",
+  "speech",
+  "spell-check",
+  "spell-check-2",
+  "spline",
+  "split",
+  "split-square-horizontal",
+  "split-square-vertical",
+  "spray-can",
+  "sprout",
+  "square",
+  "square-dashed-bottom",
+  "square-dashed-bottom-code",
+  "square-pen",
+  "square-radical",
+  "square-stack",
+  "square-user",
+  "square-user-round",
+  "squircle",
+  "squirrel",
+  "stamp",
+  "star",
+  "star-half",
+  "star-off",
+  "step-back",
+  "step-forward",
+  "stethoscope",
+  "sticker",
+  "sticky-note",
+  "stop-circle",
+  "store",
+  "stretch-horizontal",
+  "stretch-vertical",
+  "strikethrough",
+  "subscript",
+  "sun",
+  "sun-dim",
+  "sun-medium",
+  "sun-moon",
+  "sun-snow",
+  "sunrise",
+  "sunset",
+  "superscript",
+  "swatch-book",
+  "swiss-franc",
+  "switch-camera",
+  "sword",
+  "swords",
+  "syringe",
+  "table",
+  "table-2",
+  "table-cells-merge",
+  "table-cells-split",
+  "table-columns-split",
+  "table-properties",
+  "table-rows-split",
+  "tablet",
+  "tablet-smartphone",
+  "tablets",
+  "tag",
+  "tags",
+  "tally-1",
+  "tally-2",
+  "tally-3",
+  "tally-4",
+  "tally-5",
+  "tangent",
+  "target",
+  "telescope",
+  "tent",
+  "tent-tree",
+  "terminal",
+  "terminal-square",
+  "test-tube",
+  "test-tube-2",
+  "test-tubes",
+  "text",
+  "text-cursor",
+  "text-cursor-input",
+  "text-quote",
+  "text-search",
+  "text-select",
+  "theater",
+  "thermometer",
+  "thermometer-snowflake",
+  "thermometer-sun",
+  "thumbs-down",
+  "thumbs-up",
+  "ticket",
+  "ticket-check",
+  "ticket-minus",
+  "ticket-percent",
+  "ticket-plus",
+  "ticket-slash",
+  "ticket-x",
+  "timer",
+  "timer-off",
+  "timer-reset",
+  "toggle-left",
+  "toggle-right",
+  "tornado",
+  "torus",
+  "touchpad",
+  "touchpad-off",
+  "tower-control",
+  "toy-brick",
+  "tractor",
+  "traffic-cone",
+  "train-front",
+  "train-front-tunnel",
+  "train-track",
+  "tram-front",
+  "trash",
+  "trash-2",
+  "tree-deciduous",
+  "tree-pine",
+  "trees",
+  "trello",
+  "trending-down",
+  "trending-up",
+  "triangle",
+  "triangle-right",
+  "trophy",
+  "truck",
+  "turtle",
+  "tv",
+  "tv-2",
+  "twitch",
+  "twitter",
+  "type",
+  "umbrella",
+  "umbrella-off",
+  "underline",
+  "undo",
+  "undo-2",
+  "undo-dot",
+  "unfold-horizontal",
+  "unfold-vertical",
+  "ungroup",
+  "unlink",
+  "unlink-2",
+  "unlock",
+  "unlock-keyhole",
+  "unplug",
+  "upload",
+  "upload-cloud",
+  "usb",
+  "user",
+  "user-check",
+  "user-cog",
+  "user-minus",
+  "user-plus",
+  "user-round",
+  "user-round-check",
+  "user-round-cog",
+  "user-round-minus",
+  "user-round-plus",
+  "user-round-search",
+  "user-round-x",
+  "user-search",
+  "user-x",
+  "users",
+  "users-round",
+  "utensils",
+  "utensils-crossed",
+  "utility-pole",
+  "variable",
+  "vault",
+  "vegan",
+  "venetian-mask",
+  "vibrate",
+  "vibrate-off",
+  "video",
+  "video-off",
+  "videotape",
+  "view",
+  "voicemail",
+  "volume",
+  "volume-1",
+  "volume-2",
+  "volume-x",
+  "vote",
+  "wallet",
+  "wallet-2",
+  "wallet-cards",
+  "wallpaper",
+  "wand",
+  "wand-2",
+  "warehouse",
+  "washing-machine",
+  "watch",
+  "waves",
+  "waypoints",
+  "webcam",
+  "webhook",
+  "webhook-off",
+  "weight",
+  "wheat",
+  "wheat-off",
+  "whole-word",
+  "wifi",
+  "wifi-off",
+  "wind",
+  "wine",
+  "wine-off",
+  "workflow",
+  "wrap-text",
+  "wrench",
+  "x",
+  "x-circle",
+  "x-octagon",
+  "x-square",
+  "youtube",
+  "zap",
+  "zap-off",
+  "zoom-in",
+  "zoom-out"
+];
+
+// src/modal.ts
+var cachedCustomItems = [];
+async function refreshCustomIcons(app, folderPath) {
+  cachedCustomItems = [];
+  customSvgContent.clear();
+  if (!folderPath)
+    return;
+  try {
+    const adapter = app.vault.adapter;
+    const exists = await adapter.exists(folderPath);
+    if (!exists)
+      return;
+    const entries = await adapter.list(folderPath);
+    for (const filePath of entries.files) {
+      if (filePath.toLowerCase().endsWith(".svg")) {
+        const svg = await adapter.read(filePath);
+        const key = `${CUSTOM_ICON_PREFIX}${filePath}`;
+        cachedCustomItems.push(key);
+        customSvgContent.set(key, svg);
+      }
+    }
+  } catch (e) {
+  }
+}
 var CommandSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
   constructor(app, onSelect) {
     super(app);
@@ -1255,234 +2782,8 @@ var CommandSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
     this.onSelect(command);
   }
 };
-var ICON_LIST = [
-  "file",
-  "file-text",
-  "file-plus",
-  "file-minus",
-  "file-search",
-  "folder",
-  "folder-open",
-  "folder-plus",
-  "folder-minus",
-  "home",
-  "search",
-  "settings",
-  "cog",
-  "bell",
-  "bookmark",
-  "star",
-  "heart",
-  "flame",
-  "flag",
-  "award",
-  "book",
-  "book-open",
-  "bookmark",
-  "code",
-  "terminal",
-  "feather",
-  "globe",
-  "anchor",
-  "compass",
-  "map",
-  "map-pin",
-  "image",
-  "music",
-  "video",
-  "camera",
-  "film",
-  "edit",
-  "pencil",
-  "pen-tool",
-  "eraser",
-  "scissors",
-  "check",
-  "check-circle",
-  "check-square",
-  "x",
-  "x-circle",
-  "x-square",
-  "plus",
-  "plus-circle",
-  "plus-square",
-  "minus",
-  "minus-circle",
-  "trash",
-  "trash-2",
-  "archive",
-  "inbox",
-  "mail",
-  "copy",
-  "clipboard",
-  "save",
-  "printer",
-  "share",
-  "share-2",
-  "link",
-  "link-2",
-  "external-link",
-  "paperclip",
-  "hash",
-  "lock",
-  "unlock",
-  "key",
-  "shield",
-  "shield-off",
-  "eye",
-  "eye-off",
-  "search",
-  "zoom-in",
-  "zoom-out",
-  "sun",
-  "moon",
-  "sunrise",
-  "sunset",
-  "lightbulb",
-  "cloud",
-  "cloud-drizzle",
-  "cloud-snow",
-  "cloud-rain",
-  "cloud-lightning",
-  "circle",
-  "square",
-  "triangle",
-  "hexagon",
-  "diamond",
-  "arrow-up",
-  "arrow-down",
-  "arrow-left",
-  "arrow-right",
-  "chevron-up",
-  "chevron-down",
-  "chevron-left",
-  "chevron-right",
-  "chevrons-up",
-  "chevrons-down",
-  "chevrons-left",
-  "chevrons-right",
-  "move",
-  "maximize",
-  "minimize",
-  "expand",
-  "collapse",
-  "list",
-  "grid",
-  "columns",
-  "rows",
-  "table",
-  "menu",
-  "more-horizontal",
-  "more-vertical",
-  "sidebar",
-  "panel-left",
-  "panel-right",
-  "panel-top",
-  "panel-bottom",
-  "alert-circle",
-  "alert-triangle",
-  "help-circle",
-  "info",
-  "question-mark",
-  "refresh-cw",
-  "refresh-ccw",
-  "rotate-cw",
-  "rotate-ccw",
-  "sync",
-  "download",
-  "upload",
-  "log-in",
-  "log-out",
-  "user",
-  "users",
-  "user-plus",
-  "user-minus",
-  "user-check",
-  "user-x",
-  "at-sign",
-  "mail",
-  "message-circle",
-  "message-square",
-  "send",
-  "phone",
-  "smartphone",
-  "tablet",
-  "monitor",
-  "tv",
-  "clock",
-  "timer",
-  "calendar",
-  "watch",
-  "alarm-clock",
-  "wifi",
-  "wifi-off",
-  "bluetooth",
-  "signal",
-  "cast",
-  "battery",
-  "battery-charging",
-  "power",
-  "plug",
-  "zap",
-  "database",
-  "server",
-  "hard-drive",
-  "cpu",
-  "layers",
-  "git-branch",
-  "git-commit",
-  "git-merge",
-  "git-pull-request",
-  "github",
-  "heading",
-  "bold",
-  "italic",
-  "underline",
-  "type",
-  "palette",
-  "brush",
-  "droplet",
-  "paintbrush",
-  "swatch-book",
-  "target",
-  "crosshair",
-  "ruler",
-  "compass",
-  "navigation",
-  "navigation-2",
-  "volume",
-  "volume-1",
-  "volume-2",
-  "volume-x",
-  "headphones",
-  "speaker",
-  "mic",
-  "mic-off",
-  "radio",
-  "disc",
-  "music",
-  "play",
-  "pause",
-  "stop-circle",
-  "rewind",
-  "fast-forward",
-  "shuffle",
-  "repeat",
-  "skip-back",
-  "skip-forward",
-  "percent",
-  "hash",
-  "at-sign",
-  "slash",
-  "bar-chart",
-  "pie-chart",
-  "trending-up",
-  "trending-down",
-  "activity",
-  "sliders"
-];
 var IconSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
-  constructor(app, onSelect) {
+  constructor(app, customIconsFolder, onSelect) {
     super(app);
     this.onSelect = onSelect;
     this.setPlaceholder("Type to search for an icon...");
@@ -1493,9 +2794,12 @@ var IconSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
     ]);
   }
   getItems() {
-    return ICON_LIST;
+    return [...ICON_LIST, ...cachedCustomItems];
   }
   getItemText(icon) {
+    if (icon.startsWith(CUSTOM_ICON_PREFIX)) {
+      return icon.slice(CUSTOM_ICON_PREFIX.length).replace(/\.svg$/i, "");
+    }
     return icon;
   }
   renderSuggestion(item, el) {
@@ -1508,8 +2812,12 @@ var IconSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
     iconEl.style.width = "16px";
     iconEl.style.height = "16px";
     iconEl.style.flexShrink = "0";
-    (0, import_obsidian2.setIcon)(iconEl, icon);
-    wrapper.createSpan({ text: icon });
+    iconEl.style.overflow = "hidden";
+    iconEl.style.display = "flex";
+    iconEl.style.alignItems = "center";
+    iconEl.style.justifyContent = "center";
+    setCustomIcon(iconEl, icon, this.app);
+    wrapper.createSpan({ text: this.getItemText(icon) });
   }
   onChooseItem(icon) {
     this.onSelect(icon);
@@ -1540,10 +2848,10 @@ var FolderSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
 // src/components/TreeNode.svelte
 function get_each_context(ctx, list, i) {
   const child_ctx = ctx.slice();
-  child_ctx[60] = list[i];
+  child_ctx[59] = list[i];
   return child_ctx;
 }
-function create_else_block_2(ctx) {
+function create_else_block_1(ctx) {
   let div1;
   let div0;
   let t;
@@ -1556,18 +2864,18 @@ function create_else_block_2(ctx) {
       /*file*/
       ctx[2].path
     ] || !/*settings*/
-    ctx[0].hideDefaultIcons) && create_if_block_8(ctx)
+    ctx[0].hideDefaultIcons) && create_if_block_5(ctx)
   );
-  function select_block_type_3(ctx2, dirty) {
+  function select_block_type_2(ctx2, dirty) {
     if (
       /*editingPath*/
       ctx2[15] === /*file*/
       ctx2[2].path
     )
-      return create_if_block_7;
-    return create_else_block_3;
+      return create_if_block_4;
+    return create_else_block_2;
   }
-  let current_block_type = select_block_type_3(ctx, [-1, -1, -1]);
+  let current_block_type = select_block_type_2(ctx, [-1, -1]);
   let if_block1 = current_block_type(ctx);
   return {
     c() {
@@ -1581,6 +2889,8 @@ function create_else_block_2(ctx) {
       attr(div0, "draggable", "true");
       set_style(div0, "padding-left", 4 + /*depth*/
       ctx[3] * 20 + "px");
+      set_style(div0, "display", "flex");
+      set_style(div0, "align-items", "center");
       set_style(
         div0,
         "color",
@@ -1612,7 +2922,7 @@ function create_else_block_2(ctx) {
         div1,
         "is-hidden",
         /*isHidden*/
-        ctx[24]
+        ctx[25]
       );
       toggle_class(
         div1,
@@ -1637,31 +2947,31 @@ function create_else_block_2(ctx) {
             div0,
             "click",
             /*handleClick*/
-            ctx[25]
+            ctx[26]
           ),
           listen(
             div0,
             "dblclick",
             /*handleDblClick*/
-            ctx[28]
+            ctx[29]
           ),
           listen(
             div0,
             "contextmenu",
             /*handleContextMenu*/
-            ctx[29]
+            ctx[30]
           ),
           listen(
             div0,
             "dragstart",
             /*handleDragStart*/
-            ctx[30]
+            ctx[31]
           ),
           listen(
             div0,
             "dragend",
             /*handleDragEnd*/
-            ctx[34]
+            ctx[35]
           )
         ];
         mounted = true;
@@ -1679,7 +2989,7 @@ function create_else_block_2(ctx) {
         if (if_block0) {
           if_block0.p(ctx2, dirty);
         } else {
-          if_block0 = create_if_block_8(ctx2);
+          if_block0 = create_if_block_5(ctx2);
           if_block0.c();
           if_block0.m(div0, t);
         }
@@ -1687,7 +2997,7 @@ function create_else_block_2(ctx) {
         if_block0.d(1);
         if_block0 = null;
       }
-      if (current_block_type === (current_block_type = select_block_type_3(ctx2, dirty)) && if_block1) {
+      if (current_block_type === (current_block_type = select_block_type_2(ctx2, dirty)) && if_block1) {
         if_block1.p(ctx2, dirty);
       } else {
         if_block1.d(1);
@@ -1743,232 +3053,12 @@ function create_else_block_2(ctx) {
         );
       }
       if (dirty[0] & /*isHidden*/
-      16777216) {
+      33554432) {
         toggle_class(
           div1,
           "is-hidden",
           /*isHidden*/
-          ctx2[24]
-        );
-      }
-      if (dirty[0] & /*selectedPaths, file*/
-      132) {
-        toggle_class(
-          div1,
-          "is-selected",
-          /*selectedPaths*/
-          ctx2[7].has(
-            /*file*/
-            ctx2[2].path
-          )
-        );
-      }
-    },
-    i: noop,
-    o: noop,
-    d(detaching) {
-      if (detaching) {
-        detach(div1);
-      }
-      if (if_block0)
-        if_block0.d();
-      if_block1.d();
-      mounted = false;
-      run_all(dispose);
-    }
-  };
-}
-function create_if_block_4(ctx) {
-  let div1;
-  let div0;
-  let t;
-  let div1_data_path_value;
-  let mounted;
-  let dispose;
-  let if_block0 = (
-    /*settings*/
-    (ctx[0].iconMap[
-      /*file*/
-      ctx[2].path
-    ] || !/*settings*/
-    ctx[0].hideDefaultIcons) && create_if_block_6(ctx)
-  );
-  function select_block_type_2(ctx2, dirty) {
-    if (
-      /*editingPath*/
-      ctx2[15] === /*file*/
-      ctx2[2].path
-    )
-      return create_if_block_5;
-    return create_else_block_1;
-  }
-  let current_block_type = select_block_type_2(ctx, [-1, -1, -1]);
-  let if_block1 = current_block_type(ctx);
-  return {
-    c() {
-      div1 = element("div");
-      div0 = element("div");
-      if (if_block0)
-        if_block0.c();
-      t = space();
-      if_block1.c();
-      attr(div0, "class", "nav-file-title");
-      attr(div0, "draggable", "true");
-      set_style(div0, "padding-left", 4 + /*depth*/
-      ctx[3] * 20 + "px");
-      set_style(
-        div0,
-        "color",
-        /*settings*/
-        ctx[0].colorMap[
-          /*file*/
-          ctx[2].path
-        ] || void 0
-      );
-      set_style(
-        div0,
-        "--sn-color",
-        /*settings*/
-        ctx[0].colorMap[
-          /*file*/
-          ctx[2].path
-        ] || void 0
-      );
-      attr(div1, "class", "nav-file");
-      attr(div1, "data-path", div1_data_path_value = /*file*/
-      ctx[2].path);
-      toggle_class(
-        div1,
-        "is-hidden",
-        /*isHidden*/
-        ctx[24]
-      );
-      toggle_class(
-        div1,
-        "is-selected",
-        /*selectedPaths*/
-        ctx[7].has(
-          /*file*/
-          ctx[2].path
-        )
-      );
-    },
-    m(target, anchor) {
-      insert(target, div1, anchor);
-      append(div1, div0);
-      if (if_block0)
-        if_block0.m(div0, null);
-      append(div0, t);
-      if_block1.m(div0, null);
-      if (!mounted) {
-        dispose = [
-          listen(
-            div0,
-            "click",
-            /*handleClick*/
-            ctx[25]
-          ),
-          listen(
-            div0,
-            "dblclick",
-            /*handleDblClick*/
-            ctx[28]
-          ),
-          listen(
-            div0,
-            "contextmenu",
-            /*handleContextMenu*/
-            ctx[29]
-          ),
-          listen(
-            div0,
-            "dragstart",
-            /*handleDragStart*/
-            ctx[30]
-          ),
-          listen(
-            div0,
-            "dragend",
-            /*handleDragEnd*/
-            ctx[34]
-          )
-        ];
-        mounted = true;
-      }
-    },
-    p(ctx2, dirty) {
-      if (
-        /*settings*/
-        ctx2[0].iconMap[
-          /*file*/
-          ctx2[2].path
-        ] || !/*settings*/
-        ctx2[0].hideDefaultIcons
-      ) {
-        if (if_block0) {
-          if_block0.p(ctx2, dirty);
-        } else {
-          if_block0 = create_if_block_6(ctx2);
-          if_block0.c();
-          if_block0.m(div0, t);
-        }
-      } else if (if_block0) {
-        if_block0.d(1);
-        if_block0 = null;
-      }
-      if (current_block_type === (current_block_type = select_block_type_2(ctx2, dirty)) && if_block1) {
-        if_block1.p(ctx2, dirty);
-      } else {
-        if_block1.d(1);
-        if_block1 = current_block_type(ctx2);
-        if (if_block1) {
-          if_block1.c();
-          if_block1.m(div0, null);
-        }
-      }
-      if (dirty[0] & /*depth*/
-      8) {
-        set_style(div0, "padding-left", 4 + /*depth*/
-        ctx2[3] * 20 + "px");
-      }
-      const style_changed = dirty[0] & /*depth*/
-      8;
-      if (dirty[0] & /*settings, file, depth*/
-      13 || style_changed) {
-        set_style(
-          div0,
-          "color",
-          /*settings*/
-          ctx2[0].colorMap[
-            /*file*/
-            ctx2[2].path
-          ] || void 0
-        );
-      }
-      if (dirty[0] & /*settings, file, depth*/
-      13 || style_changed) {
-        set_style(
-          div0,
-          "--sn-color",
-          /*settings*/
-          ctx2[0].colorMap[
-            /*file*/
-            ctx2[2].path
-          ] || void 0
-        );
-      }
-      if (dirty[0] & /*file*/
-      4 && div1_data_path_value !== (div1_data_path_value = /*file*/
-      ctx2[2].path)) {
-        attr(div1, "data-path", div1_data_path_value);
-      }
-      if (dirty[0] & /*isHidden*/
-      16777216) {
-        toggle_class(
-          div1,
-          "is-hidden",
-          /*isHidden*/
-          ctx2[24]
+          ctx2[25]
         );
       }
       if (dirty[0] & /*selectedPaths, file*/
@@ -2033,7 +3123,7 @@ function create_if_block(ctx) {
       return create_if_block_1;
     return create_else_block;
   }
-  let current_block_type = select_block_type_1(ctx, [-1, -1, -1]);
+  let current_block_type = select_block_type_1(ctx, [-1, -1]);
   let if_block2 = current_block_type(ctx);
   let each_value = ensure_array_like(
     /*children*/
@@ -2041,7 +3131,7 @@ function create_if_block(ctx) {
   );
   const get_key = (ctx2) => (
     /*child*/
-    ctx2[60].path
+    ctx2[59].path
   );
   for (let i = 0; i < each_value.length; i += 1) {
     let child_ctx = get_each_context(ctx, each_value, i);
@@ -2068,6 +3158,8 @@ function create_if_block(ctx) {
       attr(div0, "draggable", "true");
       set_style(div0, "padding-left", 4 + /*depth*/
       ctx[3] * 20 + "px");
+      set_style(div0, "display", "flex");
+      set_style(div0, "align-items", "center");
       set_style(
         div0,
         "color",
@@ -2114,7 +3206,7 @@ function create_if_block(ctx) {
         div2,
         "is-hidden",
         /*isHidden*/
-        ctx[24]
+        ctx[25]
       );
       toggle_class(
         div2,
@@ -2150,47 +3242,47 @@ function create_if_block(ctx) {
             div0,
             "click",
             /*handleClick*/
-            ctx[25]
+            ctx[26]
           ),
           listen(
             div0,
             "dblclick",
             /*handleDblClick*/
-            ctx[28]
+            ctx[29]
           ),
           listen(
             div0,
             "contextmenu",
             /*handleContextMenu*/
-            ctx[29]
+            ctx[30]
           ),
           listen(
             div0,
             "dragstart",
             /*handleDragStart*/
-            ctx[30]
+            ctx[31]
           ),
           listen(
             div0,
             "dragend",
             /*handleDragEnd*/
-            ctx[34]
+            ctx[35]
           ),
           listen(div1, "dragover", prevent_default(
             /*handleDragOver*/
-            ctx[31]
+            ctx[32]
           )),
           listen(
             div1,
             "drop",
             /*handleDrop*/
-            ctx[32]
+            ctx[33]
           ),
           listen(
             div1,
             "dragleave",
             /*handleDragLeave*/
-            ctx[33]
+            ctx[34]
           )
         ];
         mounted = true;
@@ -2319,12 +3411,12 @@ function create_if_block(ctx) {
         );
       }
       if (!current || dirty[0] & /*isHidden*/
-      16777216) {
+      33554432) {
         toggle_class(
           div2,
           "is-hidden",
           /*isHidden*/
-          ctx2[24]
+          ctx2[25]
         );
       }
       if (!current || dirty[0] & /*selectedPaths, file*/
@@ -2371,12 +3463,20 @@ function create_if_block(ctx) {
     }
   };
 }
-function create_if_block_8(ctx) {
+function create_if_block_5(ctx) {
   let span;
   return {
     c() {
       span = element("span");
       attr(span, "class", "nav-file-icon");
+      set_style(span, "display", "inline-flex");
+      set_style(span, "align-items", "center");
+      set_style(span, "justify-content", "center");
+      set_style(span, "width", "16px");
+      set_style(span, "height", "16px");
+      set_style(span, "flex-shrink", "0");
+      set_style(span, "margin", "0");
+      set_style(span, "padding", "0");
       set_style(
         span,
         "color",
@@ -2386,7 +3486,7 @@ function create_if_block_8(ctx) {
     },
     m(target, anchor) {
       insert(target, span, anchor);
-      ctx[50](span);
+      ctx[49](span);
     },
     p(ctx2, dirty) {
       if (dirty[0] & /*iconColor*/
@@ -2403,11 +3503,11 @@ function create_if_block_8(ctx) {
       if (detaching) {
         detach(span);
       }
-      ctx[50](null);
+      ctx[49](null);
     }
   };
 }
-function create_else_block_3(ctx) {
+function create_else_block_2(ctx) {
   let div;
   let t;
   return {
@@ -2415,7 +3515,7 @@ function create_else_block_3(ctx) {
       div = element("div");
       t = text(
         /*displayName*/
-        ctx[23]
+        ctx[24]
       );
       attr(div, "class", "nav-file-title-content");
     },
@@ -2425,11 +3525,11 @@ function create_else_block_3(ctx) {
     },
     p(ctx2, dirty) {
       if (dirty[0] & /*displayName*/
-      8388608)
+      16777216)
         set_data(
           t,
           /*displayName*/
-          ctx2[23]
+          ctx2[24]
         );
     },
     d(detaching) {
@@ -2439,9 +3539,8 @@ function create_else_block_3(ctx) {
     }
   };
 }
-function create_if_block_7(ctx) {
+function create_if_block_4(ctx) {
   let input;
-  let input_value_value;
   let mounted;
   let dispose;
   return {
@@ -2449,180 +3548,43 @@ function create_if_block_7(ctx) {
       input = element("input");
       attr(input, "class", "sn-rename-input");
       attr(input, "type", "text");
-      input.value = input_value_value = /*file*/
-      ctx[2].name;
+      input.value = /*renameValue*/
+      ctx[23];
     },
     m(target, anchor) {
       insert(target, input, anchor);
-      ctx[51](input);
+      ctx[50](input);
       if (!mounted) {
         dispose = [
           listen(
             input,
             "blur",
             /*saveRename*/
-            ctx[26]
+            ctx[27]
           ),
           listen(
             input,
             "keydown",
             /*handleRenameKeydown*/
-            ctx[27]
+            ctx[28]
           )
         ];
         mounted = true;
       }
     },
     p(ctx2, dirty) {
-      if (dirty[0] & /*file*/
-      4 && input_value_value !== (input_value_value = /*file*/
-      ctx2[2].name) && input.value !== input_value_value) {
-        input.value = input_value_value;
+      if (dirty[0] & /*renameValue*/
+      8388608 && input.value !== /*renameValue*/
+      ctx2[23]) {
+        input.value = /*renameValue*/
+        ctx2[23];
       }
     },
     d(detaching) {
       if (detaching) {
         detach(input);
       }
-      ctx[51](null);
-      mounted = false;
-      run_all(dispose);
-    }
-  };
-}
-function create_if_block_6(ctx) {
-  let span;
-  return {
-    c() {
-      span = element("span");
-      attr(span, "class", "nav-file-icon");
-      set_style(
-        span,
-        "color",
-        /*iconColor*/
-        ctx[19]
-      );
-    },
-    m(target, anchor) {
-      insert(target, span, anchor);
-      ctx[48](span);
-    },
-    p(ctx2, dirty) {
-      if (dirty[0] & /*iconColor*/
-      524288) {
-        set_style(
-          span,
-          "color",
-          /*iconColor*/
-          ctx2[19]
-        );
-      }
-    },
-    d(detaching) {
-      if (detaching) {
-        detach(span);
-      }
-      ctx[48](null);
-    }
-  };
-}
-function create_else_block_1(ctx) {
-  let div;
-  let t0;
-  let t1;
-  let t2;
-  let t3;
-  return {
-    c() {
-      div = element("div");
-      t0 = text(
-        /*displayName*/
-        ctx[23]
-      );
-      t1 = text(" (");
-      t2 = text(
-        /*fileCount*/
-        ctx[21]
-      );
-      t3 = text(")");
-      attr(div, "class", "nav-file-title-content");
-    },
-    m(target, anchor) {
-      insert(target, div, anchor);
-      append(div, t0);
-      append(div, t1);
-      append(div, t2);
-      append(div, t3);
-    },
-    p(ctx2, dirty) {
-      if (dirty[0] & /*displayName*/
-      8388608)
-        set_data(
-          t0,
-          /*displayName*/
-          ctx2[23]
-        );
-      if (dirty[0] & /*fileCount*/
-      2097152)
-        set_data(
-          t2,
-          /*fileCount*/
-          ctx2[21]
-        );
-    },
-    d(detaching) {
-      if (detaching) {
-        detach(div);
-      }
-    }
-  };
-}
-function create_if_block_5(ctx) {
-  let input;
-  let input_value_value;
-  let mounted;
-  let dispose;
-  return {
-    c() {
-      input = element("input");
-      attr(input, "class", "sn-rename-input");
-      attr(input, "type", "text");
-      input.value = input_value_value = /*file*/
-      ctx[2].name;
-    },
-    m(target, anchor) {
-      insert(target, input, anchor);
-      ctx[49](input);
-      if (!mounted) {
-        dispose = [
-          listen(
-            input,
-            "blur",
-            /*saveRename*/
-            ctx[26]
-          ),
-          listen(
-            input,
-            "keydown",
-            /*handleRenameKeydown*/
-            ctx[27]
-          )
-        ];
-        mounted = true;
-      }
-    },
-    p(ctx2, dirty) {
-      if (dirty[0] & /*file*/
-      4 && input_value_value !== (input_value_value = /*file*/
-      ctx2[2].name) && input.value !== input_value_value) {
-        input.value = input_value_value;
-      }
-    },
-    d(detaching) {
-      if (detaching) {
-        detach(input);
-      }
-      ctx[49](null);
+      ctx[50](null);
       mounted = false;
       run_all(dispose);
     }
@@ -2634,17 +3596,25 @@ function create_if_block_3(ctx) {
     c() {
       span = element("span");
       attr(span, "class", "nav-folder-collapse-indicator collapse-icon");
+      set_style(span, "display", "inline-flex");
+      set_style(span, "align-items", "center");
+      set_style(span, "justify-content", "center");
+      set_style(span, "width", "16px");
+      set_style(span, "height", "16px");
+      set_style(span, "flex-shrink", "0");
+      set_style(span, "margin", "0");
+      set_style(span, "padding", "0");
     },
     m(target, anchor) {
       insert(target, span, anchor);
-      ctx[45](span);
+      ctx[46](span);
     },
     p: noop,
     d(detaching) {
       if (detaching) {
         detach(span);
       }
-      ctx[45](null);
+      ctx[46](null);
     }
   };
 }
@@ -2654,6 +3624,14 @@ function create_if_block_2(ctx) {
     c() {
       span = element("span");
       attr(span, "class", "nav-file-icon");
+      set_style(span, "display", "inline-flex");
+      set_style(span, "align-items", "center");
+      set_style(span, "justify-content", "center");
+      set_style(span, "width", "16px");
+      set_style(span, "height", "16px");
+      set_style(span, "flex-shrink", "0");
+      set_style(span, "margin", "0");
+      set_style(span, "padding", "0");
       set_style(
         span,
         "color",
@@ -2663,7 +3641,7 @@ function create_if_block_2(ctx) {
     },
     m(target, anchor) {
       insert(target, span, anchor);
-      ctx[46](span);
+      ctx[47](span);
     },
     p(ctx2, dirty) {
       if (dirty[0] & /*iconColor*/
@@ -2680,15 +3658,20 @@ function create_if_block_2(ctx) {
       if (detaching) {
         detach(span);
       }
-      ctx[46](null);
+      ctx[47](null);
     }
   };
 }
 function create_else_block(ctx) {
   let div;
   let t_value = (
-    /*file*/
-    ctx[2].name + ""
+    /*isArchived*/
+    (ctx[18] ? `${/*displayName*/
+    ctx[24]} (${/*fileCount*/
+    ctx[21]})` : (
+      /*file*/
+      ctx[2].name
+    )) + ""
   );
   let t;
   return {
@@ -2702,9 +3685,14 @@ function create_else_block(ctx) {
       append(div, t);
     },
     p(ctx2, dirty) {
-      if (dirty[0] & /*file*/
-      4 && t_value !== (t_value = /*file*/
-      ctx2[2].name + ""))
+      if (dirty[0] & /*isArchived, displayName, fileCount, file*/
+      19136516 && t_value !== (t_value = /*isArchived*/
+      (ctx2[18] ? `${/*displayName*/
+      ctx2[24]} (${/*fileCount*/
+      ctx2[21]})` : (
+        /*file*/
+        ctx2[2].name
+      )) + ""))
         set_data(t, t_value);
     },
     d(detaching) {
@@ -2716,7 +3704,6 @@ function create_else_block(ctx) {
 }
 function create_if_block_1(ctx) {
   let input;
-  let input_value_value;
   let mounted;
   let dispose;
   return {
@@ -2724,42 +3711,43 @@ function create_if_block_1(ctx) {
       input = element("input");
       attr(input, "class", "sn-rename-input");
       attr(input, "type", "text");
-      input.value = input_value_value = /*file*/
-      ctx[2].name;
+      input.value = /*renameValue*/
+      ctx[23];
     },
     m(target, anchor) {
       insert(target, input, anchor);
-      ctx[47](input);
+      ctx[48](input);
       if (!mounted) {
         dispose = [
           listen(
             input,
             "blur",
             /*saveRename*/
-            ctx[26]
+            ctx[27]
           ),
           listen(
             input,
             "keydown",
             /*handleRenameKeydown*/
-            ctx[27]
+            ctx[28]
           )
         ];
         mounted = true;
       }
     },
     p(ctx2, dirty) {
-      if (dirty[0] & /*file*/
-      4 && input_value_value !== (input_value_value = /*file*/
-      ctx2[2].name) && input.value !== input_value_value) {
-        input.value = input_value_value;
+      if (dirty[0] & /*renameValue*/
+      8388608 && input.value !== /*renameValue*/
+      ctx2[23]) {
+        input.value = /*renameValue*/
+        ctx2[23];
       }
     },
     d(detaching) {
       if (detaching) {
         detach(input);
       }
-      ctx[47](null);
+      ctx[48](null);
       mounted = false;
       run_all(dispose);
     }
@@ -2777,7 +3765,7 @@ function create_each_block(key_1, ctx) {
       ),
       file: (
         /*child*/
-        ctx[60]
+        ctx[59]
       ),
       depth: (
         /*depth*/
@@ -2844,7 +3832,7 @@ function create_each_block(key_1, ctx) {
       if (dirty[0] & /*children*/
       4194304)
         treenode_changes.file = /*child*/
-        ctx[60];
+        ctx[59];
       if (dirty[0] & /*depth*/
       8)
         treenode_changes.depth = /*depth*/
@@ -2910,23 +3898,17 @@ function create_fragment(ctx) {
   let if_block;
   let if_block_anchor;
   let current;
-  const if_block_creators = [create_if_block, create_if_block_4, create_else_block_2];
+  const if_block_creators = [create_if_block, create_else_block_1];
   const if_blocks = [];
   function select_block_type(ctx2, dirty) {
     if (
       /*isFolder*/
-      ctx2[17] && !/*isArchived*/
-      ctx2[18]
+      ctx2[17]
     )
       return 0;
-    if (
-      /*isArchived*/
-      ctx2[18]
-    )
-      return 1;
-    return 2;
+    return 1;
   }
-  current_block_type_index = select_block_type(ctx, [-1, -1, -1]);
+  current_block_type_index = select_block_type(ctx, [-1, -1]);
   if_block = if_blocks[current_block_type_index] = if_block_creators[current_block_type_index](ctx);
   return {
     c() {
@@ -2986,6 +3968,7 @@ function instance($$self, $$props, $$invalidate) {
   let visibleExtSet;
   let extHidden;
   let displayName;
+  let renameValue;
   let rawChildren;
   let children2;
   let fileCount;
@@ -3053,12 +4036,15 @@ function instance($$self, $$props, $$invalidate) {
       if (editingPath !== file.path)
         return;
       const newName = renameInputEl === null || renameInputEl === void 0 ? void 0 : renameInputEl.value.trim();
-      if (!newName || newName === file.name) {
+      const strippedName = !isFolder ? file.name.replace(/^(.+?)\.([^.]+)$/, "$1") : file.name;
+      if (!newName || newName === strippedName) {
         $$invalidate(15, editingPath = null);
         return;
       }
       const parentPath = file.parent ? file.parent.path : "";
-      const newPath = parentPath ? `${parentPath}/${newName}` : newName;
+      const ext = file instanceof import_obsidian3.TFile ? file.extension : "";
+      const finalName = ext && !newName.endsWith("." + ext) ? newName + "." + ext : newName;
+      const newPath = parentPath ? `${parentPath}/${finalName}` : finalName;
       const oldPath = file.path;
       const savedSettings = settings;
       try {
@@ -3146,7 +4132,7 @@ function instance($$self, $$props, $$invalidate) {
     event.preventDefault();
     event.stopPropagation();
     const menu = new import_obsidian3.Menu();
-    if (isFolder && !isArchived) {
+    if (isFolder) {
       menu.addItem((item) => item.setTitle("New note").setIcon("file-plus").onClick(() => __awaiter(this, void 0, void 0, function* () {
         const folder = file;
         const path = app.vault.getAvailablePath(folder.path + "/Untitled", "md");
@@ -3161,6 +4147,24 @@ function instance($$self, $$props, $$invalidate) {
         const path = app.vault.getAvailablePath(folder.path + "/New folder", "");
         yield app.vault.createFolder(path);
       })));
+      if (settings.newMenuCommands && settings.newMenuCommands.length > 0) {
+        menu.addItem((item) => {
+          item.setTitle("New...").setIcon("plus-circle");
+          const sub = item.setSubmenu();
+          for (const cmd of settings.newMenuCommands) {
+            if (!cmd.commandId)
+              continue;
+            sub.addItem((s) => {
+              s.setTitle(cmd.label);
+              if (cmd.icon)
+                s.setIcon(cmd.icon);
+              s.onClick(() => {
+                app.commands.executeCommandById(cmd.commandId);
+              });
+            });
+          }
+        });
+      }
       menu.addSeparator();
       menu.addItem((item) => item.setTitle("Duplicate").setIcon("copy").onClick(() => __awaiter(this, void 0, void 0, function* () {
         var _a2;
@@ -3217,6 +4221,23 @@ function instance($$self, $$props, $$invalidate) {
       $$invalidate(0, settings = next);
       yield onUpdateSettings(settings);
     })));
+    const singleArchived = !isMultiSelected && isFolder && settings.archivedPaths.includes(file.path);
+    if (isFolder) {
+      const isArchivedFolder = settings.archivedPaths.includes(file.path);
+      menu.addItem((item) => item.setTitle(isArchivedFolder ? "Unarchive folder" : "Archive folder").setIcon(isArchivedFolder ? "folder" : "archive").onClick(() => __awaiter(this, void 0, void 0, function* () {
+        const next = Object.assign({}, settings);
+        if (isArchivedFolder) {
+          next.archivedPaths = next.archivedPaths.filter((p) => p !== file.path);
+        } else {
+          next.archivedPaths = [...next.archivedPaths, file.path];
+          const om = Object.assign({}, next.orderMap);
+          delete om[file.path];
+          next.orderMap = om;
+        }
+        $$invalidate(0, settings = next);
+        yield onUpdateSettings(settings);
+      })));
+    }
     const ctxX = event.clientX;
     const ctxY = event.clientY;
     menu.addSeparator();
@@ -3243,12 +4264,27 @@ function instance($$self, $$props, $$invalidate) {
           sub.setTitle("More colors...").setIcon("palette");
           const subsub = sub.setSubmenu();
           for (const color of settings.customColors) {
-            subsub.addItem((s) => s.setTitle(color).onClick(() => __awaiter(this, void 0, void 0, function* () {
-              const next = Object.assign({}, settings);
-              next.colorMap = Object.assign(Object.assign({}, next.colorMap), { [file.path]: color });
-              $$invalidate(0, settings = next);
-              yield onUpdateSettings(settings);
-            })));
+            subsub.addItem((s) => {
+              const frag = document.createDocumentFragment();
+              const circle = document.createElement("span");
+              circle.style.display = "inline-block";
+              circle.style.width = "12px";
+              circle.style.height = "12px";
+              circle.style.borderRadius = "50%";
+              circle.style.backgroundColor = color;
+              circle.style.marginRight = "8px";
+              circle.style.verticalAlign = "middle";
+              circle.style.border = "1px solid var(--background-modifier-border)";
+              frag.appendChild(circle);
+              frag.appendChild(document.createTextNode(color));
+              s.setTitle(frag);
+              s.onClick(() => __awaiter(this, void 0, void 0, function* () {
+                const next = Object.assign({}, settings);
+                next.colorMap = Object.assign(Object.assign({}, next.colorMap), { [file.path]: color });
+                $$invalidate(0, settings = next);
+                yield onUpdateSettings(settings);
+              }));
+            });
           }
         });
       }
@@ -3274,14 +4310,16 @@ function instance($$self, $$props, $$invalidate) {
         yield onUpdateSettings(settings);
       })));
       submenu.addItem((sub) => sub.setTitle("More icons...").setIcon("search").onClick(() => {
+        var _a2;
         new IconSuggestModal(
           app,
-          (iconName) => {
+          (_a2 = settings.customIconsFolder) !== null && _a2 !== void 0 ? _a2 : "",
+          (iconName) => __awaiter(this, void 0, void 0, function* () {
             const next = Object.assign({}, settings);
             next.iconMap = Object.assign(Object.assign({}, next.iconMap), { [file.path]: iconName });
             $$invalidate(0, settings = next);
-            onUpdateSettings(settings);
-          }
+            yield onUpdateSettings(settings);
+          })
         ).open();
       }));
     });
@@ -3291,65 +4329,41 @@ function instance($$self, $$props, $$invalidate) {
         item.setTitle("Set collapse icons...").setIcon("chevrons-right");
         const submenu = item.setSubmenu();
         const currCollapsed = ((_a2 = settings.folderCollapseIconMap[file.path]) === null || _a2 === void 0 ? void 0 : _a2.collapsed) || settings.collapseIcon || "chevron-right";
-        submenu.addItem((sub) => {
-          sub.setTitle(`Collapsed: ${currCollapsed}`).setIcon(currCollapsed);
-          const subsub = sub.setSubmenu();
-          for (const icon of ICON_OPTIONS) {
-            subsub.addItem((s) => s.setTitle(icon).setIcon(icon).onClick(() => __awaiter(this, void 0, void 0, function* () {
-              const next = Object.assign({}, settings);
-              const fcm = Object.assign({}, next.folderCollapseIconMap);
-              const current = fcm[file.path] || { collapsed: "", expanded: "" };
-              fcm[file.path] = Object.assign(Object.assign({}, current), { collapsed: icon });
-              next.folderCollapseIconMap = fcm;
-              $$invalidate(0, settings = next);
-              yield onUpdateSettings(settings);
-            })));
-          }
-          subsub.addItem((s) => s.setTitle("More...").setIcon("search").onClick(() => {
-            new IconSuggestModal(
-              app,
-              (iconName) => {
-                const next = Object.assign({}, settings);
-                const fcm = Object.assign({}, next.folderCollapseIconMap);
-                const current = fcm[file.path] || { collapsed: "", expanded: "" };
-                fcm[file.path] = Object.assign(Object.assign({}, current), { collapsed: iconName });
-                $$invalidate(0, settings = next);
-                onUpdateSettings(settings);
-              }
-            ).open();
-          }));
-        });
         const currExpanded = ((_b2 = settings.folderCollapseIconMap[file.path]) === null || _b2 === void 0 ? void 0 : _b2.expanded) || settings.collapseIconExpanded || "chevron-down";
-        submenu.addItem((sub) => {
-          sub.setTitle(`Expanded: ${currExpanded}`).setIcon(currExpanded);
-          const subsub = sub.setSubmenu();
-          for (const icon of ICON_OPTIONS) {
-            subsub.addItem((s) => s.setTitle(icon).setIcon(icon).onClick(() => __awaiter(this, void 0, void 0, function* () {
+        submenu.addItem((sub) => sub.setTitle(`Collapse icon: ${currCollapsed}`).setIcon(currCollapsed).onClick(() => {
+          var _a3;
+          new IconSuggestModal(
+            app,
+            (_a3 = settings.customIconsFolder) !== null && _a3 !== void 0 ? _a3 : "",
+            (iconName) => __awaiter(this, void 0, void 0, function* () {
               const next = Object.assign({}, settings);
               const fcm = Object.assign({}, next.folderCollapseIconMap);
               const current = fcm[file.path] || { collapsed: "", expanded: "" };
-              fcm[file.path] = Object.assign(Object.assign({}, current), { expanded: icon });
+              fcm[file.path] = Object.assign(Object.assign({}, current), { collapsed: iconName });
               next.folderCollapseIconMap = fcm;
               $$invalidate(0, settings = next);
               yield onUpdateSettings(settings);
-            })));
-          }
-          subsub.addItem((s) => s.setTitle("More...").setIcon("search").onClick(() => {
-            new IconSuggestModal(
-              app,
-              (iconName) => {
-                const next = Object.assign({}, settings);
-                const fcm = Object.assign({}, next.folderCollapseIconMap);
-                const current = fcm[file.path] || { collapsed: "", expanded: "" };
-                fcm[file.path] = Object.assign(Object.assign({}, current), { expanded: iconName });
-                $$invalidate(0, settings = next);
-                onUpdateSettings(settings);
-              }
-            ).open();
-          }));
-        });
+            })
+          ).open();
+        }));
+        submenu.addItem((sub) => sub.setTitle(`Expand icon: ${currExpanded}`).setIcon(currExpanded).onClick(() => {
+          var _a3;
+          new IconSuggestModal(
+            app,
+            (_a3 = settings.customIconsFolder) !== null && _a3 !== void 0 ? _a3 : "",
+            (iconName) => __awaiter(this, void 0, void 0, function* () {
+              const next = Object.assign({}, settings);
+              const fcm = Object.assign({}, next.folderCollapseIconMap);
+              const current = fcm[file.path] || { collapsed: "", expanded: "" };
+              fcm[file.path] = Object.assign(Object.assign({}, current), { expanded: iconName });
+              next.folderCollapseIconMap = fcm;
+              $$invalidate(0, settings = next);
+              yield onUpdateSettings(settings);
+            })
+          ).open();
+        }));
         submenu.addSeparator();
-        submenu.addItem((sub) => sub.setTitle("Default (remove)").setIcon("x").onClick(() => __awaiter(this, void 0, void 0, function* () {
+        submenu.addItem((sub) => sub.setTitle("Reset chevron icons").setIcon("x").onClick(() => __awaiter(this, void 0, void 0, function* () {
           const next = Object.assign({}, settings);
           const fcm = Object.assign({}, next.folderCollapseIconMap);
           delete fcm[file.path];
@@ -3423,6 +4437,8 @@ function instance($$self, $$props, $$invalidate) {
   }
   function handleDragOver(e) {
     e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    updateAutoScroll(e.clientY);
     const target = resolveDropTarget(e.clientX, e.clientY);
     if (!target) {
       clearFolderHighlight();
@@ -3488,13 +4504,13 @@ function instance($$self, $$props, $$invalidate) {
   function span_binding($$value) {
     binding_callbacks[$$value ? "unshift" : "push"](() => {
       collapseIconEl = $$value;
-      $$invalidate(13, collapseIconEl), $$invalidate(12, collapsed), $$invalidate(39, collapseIconId), $$invalidate(38, collapseIconExpandedId), $$invalidate(0, settings), $$invalidate(2, file), $$invalidate(35, _a), $$invalidate(36, _b);
+      $$invalidate(13, collapseIconEl), $$invalidate(12, collapsed), $$invalidate(40, collapseIconId), $$invalidate(39, collapseIconExpandedId), $$invalidate(1, app), $$invalidate(0, settings), $$invalidate(2, file), $$invalidate(36, _a), $$invalidate(37, _b);
     });
   }
   function span_binding_1($$value) {
     binding_callbacks[$$value ? "unshift" : "push"](() => {
       typeIconEl = $$value;
-      $$invalidate(14, typeIconEl), $$invalidate(40, iconId), $$invalidate(0, settings), $$invalidate(2, file), $$invalidate(18, isArchived), $$invalidate(17, isFolder), $$invalidate(41, extHidden), $$invalidate(44, visibleExtSet);
+      $$invalidate(14, typeIconEl);
     });
   }
   function input_binding($$value) {
@@ -3506,22 +4522,10 @@ function instance($$self, $$props, $$invalidate) {
   function span_binding_2($$value) {
     binding_callbacks[$$value ? "unshift" : "push"](() => {
       typeIconEl = $$value;
-      $$invalidate(14, typeIconEl), $$invalidate(40, iconId), $$invalidate(0, settings), $$invalidate(2, file), $$invalidate(18, isArchived), $$invalidate(17, isFolder), $$invalidate(41, extHidden), $$invalidate(44, visibleExtSet);
+      $$invalidate(14, typeIconEl);
     });
   }
   function input_binding_1($$value) {
-    binding_callbacks[$$value ? "unshift" : "push"](() => {
-      renameInputEl = $$value;
-      $$invalidate(16, renameInputEl);
-    });
-  }
-  function span_binding_3($$value) {
-    binding_callbacks[$$value ? "unshift" : "push"](() => {
-      typeIconEl = $$value;
-      $$invalidate(14, typeIconEl), $$invalidate(40, iconId), $$invalidate(0, settings), $$invalidate(2, file), $$invalidate(18, isArchived), $$invalidate(17, isFolder), $$invalidate(41, extHidden), $$invalidate(44, visibleExtSet);
-    });
-  }
-  function input_binding_2($$value) {
     binding_callbacks[$$value ? "unshift" : "push"](() => {
       renameInputEl = $$value;
       $$invalidate(16, renameInputEl);
@@ -3580,42 +4584,47 @@ function instance($$self, $$props, $$invalidate) {
     if ($$self.$$.dirty[0] & /*settings*/
     1) {
       $:
-        $$invalidate(42, hiddenSet = new Set(settings.hiddenPaths));
+        $$invalidate(43, hiddenSet = new Set(settings.hiddenPaths));
     }
     if ($$self.$$.dirty[0] & /*file*/
     4 | $$self.$$.dirty[1] & /*hiddenSet*/
-    2048) {
+    4096) {
       $:
-        $$invalidate(24, isHidden = hiddenSet.has(file.path));
+        $$invalidate(25, isHidden = hiddenSet.has(file.path));
     }
     if ($$self.$$.dirty[0] & /*settings*/
     1) {
       $:
-        $$invalidate(44, visibleExtSet = getVisibleExtSet(settings.visibleExtensions));
+        $$invalidate(45, visibleExtSet = getVisibleExtSet(settings.visibleExtensions));
     }
     if ($$self.$$.dirty[0] & /*isFolder, file*/
     131076 | $$self.$$.dirty[1] & /*visibleExtSet*/
-    8192) {
+    16384) {
       $:
-        $$invalidate(41, extHidden = !isFolder && visibleExtSet !== null && !visibleExtSet.has((() => {
+        $$invalidate(42, extHidden = !isFolder && visibleExtSet !== null && !visibleExtSet.has((() => {
           const dotIdx = file.name.lastIndexOf(".");
           return dotIdx >= 0 ? file.name.slice(dotIdx + 1).toLowerCase() : "";
         })()));
     }
     if ($$self.$$.dirty[0] & /*file*/
     4 | $$self.$$.dirty[1] & /*extHidden*/
-    1024) {
+    2048) {
       $:
-        $$invalidate(23, displayName = extHidden ? file.name.slice(0, file.name.lastIndexOf(".")) : file.name);
+        $$invalidate(24, displayName = extHidden ? file.name.slice(0, file.name.lastIndexOf(".")) : file.name);
+    }
+    if ($$self.$$.dirty[0] & /*isFolder, file*/
+    131076) {
+      $:
+        $$invalidate(23, renameValue = !isFolder ? file.name.replace(/^(.+?)\.([^.]+)$/, "$1") : file.name);
     }
     if ($$self.$$.dirty[0] & /*isFolder, isArchived, file, settings, refreshKey*/
     393285) {
       $:
-        $$invalidate(43, rawChildren = isFolder && !isArchived ? sortWithOrder([...file.children], settings.orderMap, file.path, refreshKey) : []);
+        $$invalidate(44, rawChildren = isFolder ? isArchived ? [...file.children].sort(defaultSortFn) : sortWithOrder([...file.children], settings.orderMap, file.path, refreshKey) : []);
     }
     if ($$self.$$.dirty[0] & /*showHidden*/
     32 | $$self.$$.dirty[1] & /*rawChildren, hiddenSet*/
-    6144) {
+    12288) {
       $:
         $$invalidate(22, children2 = showHidden ? rawChildren : rawChildren.filter((c) => !hiddenSet.has(c.path)));
     }
@@ -3626,38 +4635,37 @@ function instance($$self, $$props, $$invalidate) {
     }
     if ($$self.$$.dirty[0] & /*settings, file, isArchived, isFolder*/
     393221 | $$self.$$.dirty[1] & /*extHidden*/
+    2048) {
+      $:
+        $$invalidate(41, iconId = settings.iconMap[file.path] || (isArchived ? "archive" : isFolder ? "folder" : extHidden ? "file-text" : getFileIcon(file.name)));
+    }
+    if ($$self.$$.dirty[0] & /*typeIconEl, app*/
+    16386 | $$self.$$.dirty[1] & /*iconId*/
     1024) {
       $:
-        $$invalidate(40, iconId = settings.iconMap[file.path] || (isArchived ? "archive" : isFolder ? "folder" : extHidden ? "file-text" : getFileIcon(file.name)));
-    }
-    if ($$self.$$.dirty[0] & /*typeIconEl*/
-    16384 | $$self.$$.dirty[1] & /*iconId*/
-    512) {
-      $:
         if (typeIconEl) {
-          $$invalidate(14, typeIconEl.innerHTML = "", typeIconEl);
-          (0, import_obsidian3.setIcon)(typeIconEl, iconId);
+          setCustomIcon(typeIconEl, iconId, app);
         }
     }
     if ($$self.$$.dirty[0] & /*settings, file*/
     5 | $$self.$$.dirty[1] & /*_a*/
-    16) {
+    32) {
       $:
-        $$invalidate(39, collapseIconId = ($$invalidate(35, _a = settings.folderCollapseIconMap[file.path]) === null || _a === void 0 ? void 0 : _a.collapsed) || settings.collapseIcon || "chevron-right");
+        $$invalidate(40, collapseIconId = ($$invalidate(36, _a = settings.folderCollapseIconMap[file.path]) === null || _a === void 0 ? void 0 : _a.collapsed) || settings.collapseIcon || "chevron-right");
     }
     if ($$self.$$.dirty[0] & /*settings, file*/
     5 | $$self.$$.dirty[1] & /*_b*/
-    32) {
+    64) {
       $:
-        $$invalidate(38, collapseIconExpandedId = ($$invalidate(36, _b = settings.folderCollapseIconMap[file.path]) === null || _b === void 0 ? void 0 : _b.expanded) || settings.collapseIconExpanded || "chevron-down");
+        $$invalidate(39, collapseIconExpandedId = ($$invalidate(37, _b = settings.folderCollapseIconMap[file.path]) === null || _b === void 0 ? void 0 : _b.expanded) || settings.collapseIconExpanded || "chevron-down");
     }
-    if ($$self.$$.dirty[0] & /*collapseIconEl, collapsed, settings, file*/
-    12293 | $$self.$$.dirty[1] & /*collapseIconId, collapseIconExpandedId*/
-    384) {
+    if ($$self.$$.dirty[0] & /*collapseIconEl, collapsed, app, settings, file*/
+    12295 | $$self.$$.dirty[1] & /*collapseIconId, collapseIconExpandedId*/
+    768) {
       $:
         if (collapseIconEl) {
           $$invalidate(13, collapseIconEl.innerHTML = "", collapseIconEl);
-          (0, import_obsidian3.setIcon)(collapseIconEl, collapsed ? collapseIconId : collapseIconExpandedId);
+          setCustomIcon(collapseIconEl, collapsed ? collapseIconId : collapseIconExpandedId, app);
           const color = settings.colorMap[file.path] || "";
           if (color) {
             collapseIconEl.style.setProperty("color", color, "important");
@@ -3690,11 +4698,11 @@ function instance($$self, $$props, $$invalidate) {
     if ($$self.$$.dirty[0] & /*selectedPaths, file*/
     132) {
       $:
-        $$invalidate(37, isMultiSelected = selectedPaths.size > 1 && selectedPaths.has(file.path));
+        $$invalidate(38, isMultiSelected = selectedPaths.size > 1 && selectedPaths.has(file.path));
     }
     if ($$self.$$.dirty[0] & /*selectedPaths, file*/
     132 | $$self.$$.dirty[1] & /*isMultiSelected*/
-    64) {
+    128) {
       $:
         targetPaths = isMultiSelected ? Array.from(selectedPaths) : [file.path];
     }
@@ -3723,6 +4731,7 @@ function instance($$self, $$props, $$invalidate) {
     isActive,
     fileCount,
     children2,
+    renameValue,
     displayName,
     isHidden,
     handleClick,
@@ -3749,9 +4758,7 @@ function instance($$self, $$props, $$invalidate) {
     span_binding_1,
     input_binding,
     span_binding_2,
-    input_binding_1,
-    span_binding_3,
-    input_binding_2
+    input_binding_1
   ];
 }
 var TreeNode = class extends SvelteComponent {
@@ -3778,7 +4785,7 @@ var TreeNode = class extends SvelteComponent {
         onUpdateSettings: 11
       },
       null,
-      [-1, -1, -1]
+      [-1, -1]
     );
   }
 };
@@ -3787,7 +4794,7 @@ var TreeNode_default = TreeNode;
 // src/components/TreeView.svelte
 function get_each_context2(ctx, list, i) {
   const child_ctx = ctx.slice();
-  child_ctx[23] = list[i];
+  child_ctx[31] = list[i];
   return child_ctx;
 }
 function create_each_block2(key_1, ctx) {
@@ -3802,7 +4809,7 @@ function create_each_block2(key_1, ctx) {
       ),
       file: (
         /*child*/
-        ctx[23]
+        ctx[31]
       ),
       depth: 0,
       activeFilePath: (
@@ -3859,35 +4866,35 @@ function create_each_block2(key_1, ctx) {
     p(new_ctx, dirty) {
       ctx = new_ctx;
       const treenode_changes = {};
-      if (dirty & /*app*/
+      if (dirty[0] & /*app*/
       2)
         treenode_changes.app = /*app*/
         ctx[1];
-      if (dirty & /*children*/
+      if (dirty[0] & /*children*/
       128)
         treenode_changes.file = /*child*/
-        ctx[23];
-      if (dirty & /*activeFilePath*/
+        ctx[31];
+      if (dirty[0] & /*activeFilePath*/
       32)
         treenode_changes.activeFilePath = /*activeFilePath*/
         ctx[5];
-      if (dirty & /*settings*/
+      if (dirty[0] & /*settings*/
       1)
         treenode_changes.settings = /*settings*/
         ctx[0];
-      if (dirty & /*showHidden*/
+      if (dirty[0] & /*showHidden*/
       4)
         treenode_changes.showHidden = /*showHidden*/
         ctx[2];
-      if (dirty & /*refreshKey*/
+      if (dirty[0] & /*refreshKey*/
       8)
         treenode_changes.refreshKey = /*refreshKey*/
         ctx[3];
-      if (dirty & /*selectedPaths*/
+      if (dirty[0] & /*selectedPaths*/
       64)
         treenode_changes.selectedPaths = /*selectedPaths*/
         ctx[6];
-      if (dirty & /*onUpdateSettings*/
+      if (dirty[0] & /*onUpdateSettings*/
       16)
         treenode_changes.onUpdateSettings = /*onUpdateSettings*/
         ctx[4];
@@ -3925,7 +4932,7 @@ function create_fragment2(ctx) {
   );
   const get_key = (ctx2) => (
     /*child*/
-    ctx2[23].path
+    ctx2[31].path
   );
   for (let i = 0; i < each_value.length; i += 1) {
     let child_ctx = get_each_context2(ctx, each_value, i);
@@ -3954,32 +4961,32 @@ function create_fragment2(ctx) {
       current = true;
       if (!mounted) {
         dispose = [
-          listen(div0, "dragover", prevent_default(
+          listen(div1, "click", self(
+            /*clearSelection*/
+            ctx[9]
+          )),
+          listen(div1, "dragover", prevent_default(
             /*handleRootDragOver*/
             ctx[10]
           )),
           listen(
-            div0,
+            div1,
             "drop",
             /*handleRootDrop*/
             ctx[11]
           ),
           listen(
-            div0,
+            div1,
             "dragleave",
             /*handleRootDragLeave*/
             ctx[12]
-          ),
-          listen(div1, "click", self(
-            /*clearSelection*/
-            ctx[9]
-          ))
+          )
         ];
         mounted = true;
       }
     },
-    p(ctx2, [dirty]) {
-      if (dirty & /*app, children, activeFilePath, settings, showHidden, refreshKey, selectedPaths, handleSelect, clearSelection, handleSortEnd, onUpdateSettings*/
+    p(ctx2, dirty) {
+      if (dirty[0] & /*app, children, activeFilePath, settings, showHidden, refreshKey, selectedPaths, handleSelect, clearSelection, handleSortEnd, onUpdateSettings*/
       9215) {
         each_value = ensure_array_like(
           /*children*/
@@ -4065,7 +5072,9 @@ function instance2($$self, $$props, $$invalidate) {
   }
   let keydownHandler = null;
   let rootContextHandler = null;
+  let viewContentEl = null;
   function handleRootDragOver(e) {
+    updateAutoScroll(e.clientY);
     const target = resolveDropTarget(e.clientX, e.clientY);
     if (!target) {
       clearFolderHighlight();
@@ -4122,9 +5131,80 @@ function instance2($$self, $$props, $$invalidate) {
       return;
     clearFolderHighlight();
   }
+  function handleDocumentDragOver(e) {
+    if (!dragState.itemPath)
+      return;
+    e.dataTransfer.dropEffect = "move";
+    const tree = document.querySelector(".simple-navigator-tree");
+    if (!tree)
+      return;
+    const tr = tree.getBoundingClientRect();
+    if (e.clientY < tr.top - DROP_ZONE_BUFFER || e.clientY > tr.bottom)
+      return;
+    if (e.clientY >= tr.top)
+      return;
+    e.preventDefault();
+    handleRootDragOver(e);
+  }
+  function handleDocumentDragEnter(e) {
+    if (!dragState.itemPath)
+      return;
+    e.dataTransfer.dropEffect = "move";
+    e.preventDefault();
+  }
+  function handleDocumentDrop(e) {
+    if (!dragState.itemPath)
+      return;
+    e.dataTransfer.dropEffect = "move";
+    const tree = document.querySelector(".simple-navigator-tree");
+    if (!tree)
+      return;
+    if (tree.contains(e.target))
+      return;
+    const tr = tree.getBoundingClientRect();
+    if (e.clientY < tr.top - DROP_ZONE_BUFFER || e.clientY > tr.bottom)
+      return;
+    e.preventDefault();
+    handleRootDrop(e);
+  }
+  function isAboveTree(clientY) {
+    const tree = document.querySelector(".simple-navigator-tree");
+    if (!tree)
+      return false;
+    const tr = tree.getBoundingClientRect();
+    return clientY >= tr.top - DROP_ZONE_BUFFER && clientY < tr.top;
+  }
+  function handleViewContentDragEnter(e) {
+    if (!dragState.itemPath)
+      return;
+    if (!isAboveTree(e.clientY))
+      return;
+    e.dataTransfer.dropEffect = "move";
+    e.preventDefault();
+  }
+  function handleViewContentDragOver(e) {
+    if (!dragState.itemPath)
+      return;
+    if (!isAboveTree(e.clientY))
+      return;
+    e.dataTransfer.dropEffect = "move";
+    e.preventDefault();
+    handleRootDragOver(e);
+  }
+  function handleViewContentDrop(e) {
+    if (!dragState.itemPath)
+      return;
+    if (isAboveTree(e.clientY)) {
+      e.dataTransfer.dropEffect = "move";
+      e.preventDefault();
+      handleRootDrop(e);
+    }
+  }
   function handleSortEnd(detail) {
     return __awaiter(this, void 0, void 0, function* () {
       if (detail.fromPath === detail.toPath && detail.newIndex >= 0) {
+        if (detail.fromPath && settings.archivedPaths.includes(detail.fromPath))
+          return;
         const container = document.querySelector(`.simple-navigator-tree [data-folder-path="${detail.fromPath}"]`);
         if (!container) {
           console.warn("Container not found for", detail.fromPath);
@@ -4188,10 +5268,17 @@ function instance2($$self, $$props, $$invalidate) {
                 sourceNames.push(n);
             }
           }
-          newOrderMap[detail.fromPath] = sourceNames;
+          if (!detail.fromPath || !settings.archivedPaths.includes(detail.fromPath)) {
+            newOrderMap[detail.fromPath] = sourceNames;
+          } else {
+            delete newOrderMap[detail.fromPath];
+          }
         } else {
-          newOrderMap[detail.fromPath] = ((sourceFolder === null || sourceFolder === void 0 ? void 0 : sourceFolder.children) || []).map((c) => c.name);
+          if (!detail.fromPath || !settings.archivedPaths.includes(detail.fromPath)) {
+            newOrderMap[detail.fromPath] = ((sourceFolder === null || sourceFolder === void 0 ? void 0 : sourceFolder.children) || []).map((c) => c.name);
+          }
         }
+        const isArchivedTarget = detail.toPath && settings.archivedPaths.includes(detail.toPath);
         const targetContainer = document.querySelector(`.simple-navigator-tree [data-folder-path="${detail.toPath}"]`);
         let orderedNames;
         if (targetContainer) {
@@ -4205,7 +5292,7 @@ function instance2($$self, $$props, $$invalidate) {
                 orderedNames.push(n);
             }
           }
-          if (detail.newIndex >= 0) {
+          if (detail.newIndex >= 0 && !isArchivedTarget) {
             const itemName = file.name;
             const idx = orderedNames.indexOf(itemName);
             if (idx >= 0) {
@@ -4216,7 +5303,7 @@ function instance2($$self, $$props, $$invalidate) {
           }
         } else {
           orderedNames = ((targetFolder === null || targetFolder === void 0 ? void 0 : targetFolder.children) || []).map((c) => c.name);
-          if (detail.newIndex >= 0) {
+          if (detail.newIndex >= 0 && !isArchivedTarget) {
             const itemName = file.name;
             const idx = orderedNames.indexOf(itemName);
             if (idx >= 0) {
@@ -4226,7 +5313,9 @@ function instance2($$self, $$props, $$invalidate) {
             orderedNames.splice(safeIndex, 0, itemName);
           }
         }
-        newOrderMap[detail.toPath] = orderedNames;
+        if (!isArchivedTarget) {
+          newOrderMap[detail.toPath] = orderedNames;
+        }
         $$invalidate(0, settings = Object.assign(Object.assign({}, settings), { orderMap: newOrderMap }));
         yield onUpdateSettings(settings);
       }
@@ -4247,6 +5336,24 @@ function instance2($$self, $$props, $$invalidate) {
       const path = app.vault.getAvailablePath("New folder", "");
       yield app.vault.createFolder(path);
     })));
+    if (settings.newMenuCommands && settings.newMenuCommands.length > 0) {
+      menu.addItem((item) => {
+        item.setTitle("New...").setIcon("plus-circle");
+        const sub = item.setSubmenu();
+        for (const cmd of settings.newMenuCommands) {
+          if (!cmd.commandId)
+            continue;
+          sub.addItem((s) => {
+            s.setTitle(cmd.label);
+            if (cmd.icon)
+              s.setIcon(cmd.icon);
+            s.onClick(() => {
+              app.commands.executeCommandById(cmd.commandId);
+            });
+          });
+        }
+      });
+    }
     for (const [sectionName, entries] of Object.entries(settings.submenus)) {
       if (entries.length === 0)
         continue;
@@ -4331,16 +5438,34 @@ function instance2($$self, $$props, $$invalidate) {
       handleRootContextMenu(e);
     };
     document.addEventListener("contextmenu", rootContextHandler);
+    document.addEventListener("dragover", handleDocumentDragOver, true);
+    document.addEventListener("dragenter", handleDocumentDragEnter, true);
+    document.addEventListener("drop", handleDocumentDrop, true);
+    const treeEl = document.querySelector(".simple-navigator-tree");
+    viewContentEl = treeEl === null || treeEl === void 0 ? void 0 : treeEl.closest(".view-content");
+    if (viewContentEl) {
+      viewContentEl.addEventListener("dragover", handleViewContentDragOver);
+      viewContentEl.addEventListener("dragenter", handleViewContentDragEnter);
+      viewContentEl.addEventListener("drop", handleViewContentDrop);
+    }
   });
   onDestroy(() => {
     if (activeLeafRef) {
       app.workspace.offref(activeLeafRef);
     }
+    document.removeEventListener("dragover", handleDocumentDragOver, true);
+    document.removeEventListener("dragenter", handleDocumentDragEnter, true);
+    document.removeEventListener("drop", handleDocumentDrop, true);
     if (keydownHandler) {
       document.removeEventListener("keydown", keydownHandler);
     }
     if (rootContextHandler) {
       document.removeEventListener("contextmenu", rootContextHandler);
+    }
+    if (viewContentEl) {
+      viewContentEl.removeEventListener("dragover", handleViewContentDragOver);
+      viewContentEl.removeEventListener("dragenter", handleViewContentDragEnter);
+      viewContentEl.removeEventListener("drop", handleViewContentDrop);
     }
   });
   $$self.$$set = ($$props2) => {
@@ -4358,17 +5483,17 @@ function instance2($$self, $$props, $$invalidate) {
       $$invalidate(4, onUpdateSettings = $$props2.onUpdateSettings);
   };
   $$self.$$.update = () => {
-    if ($$self.$$.dirty & /*rootFolder, settings, refreshKey*/
+    if ($$self.$$.dirty[0] & /*rootFolder, settings, refreshKey*/
     16393) {
       $:
         $$invalidate(16, rawChildren = sortWithOrder([...rootFolder.children], settings.orderMap, "", refreshKey));
     }
-    if ($$self.$$.dirty & /*settings*/
+    if ($$self.$$.dirty[0] & /*settings*/
     1) {
       $:
         $$invalidate(15, hiddenSet = new Set(settings.hiddenPaths));
     }
-    if ($$self.$$.dirty & /*showHidden, rawChildren, hiddenSet*/
+    if ($$self.$$.dirty[0] & /*showHidden, rawChildren, hiddenSet*/
     98308) {
       $:
         $$invalidate(7, children2 = showHidden ? rawChildren : rawChildren.filter((c) => !hiddenSet.has(c.path)));
@@ -4397,14 +5522,23 @@ function instance2($$self, $$props, $$invalidate) {
 var TreeView = class extends SvelteComponent {
   constructor(options) {
     super();
-    init(this, options, instance2, create_fragment2, safe_not_equal, {
-      app: 1,
-      rootFolder: 14,
-      settings: 0,
-      showHidden: 2,
-      refreshKey: 3,
-      onUpdateSettings: 4
-    });
+    init(
+      this,
+      options,
+      instance2,
+      create_fragment2,
+      safe_not_equal,
+      {
+        app: 1,
+        rootFolder: 14,
+        settings: 0,
+        showHidden: 2,
+        refreshKey: 3,
+        onUpdateSettings: 4
+      },
+      null,
+      [-1, -1]
+    );
   }
 };
 var TreeView_default = TreeView;
@@ -4438,9 +5572,6 @@ var SimpleNavigatorView = class extends import_obsidian5.ItemView {
   }
   async onOpen() {
     this.contentEl.innerHTML = "";
-    this.addAction("eye", "Toggle hidden files", () => {
-      this.toggleShowHidden();
-    });
     const root = this.app.vault.getRoot();
     this.component = new TreeView_default({
       target: this.contentEl,
@@ -4503,7 +5634,9 @@ var DEFAULT_SETTINGS = {
   renameOnDoubleClickFiles: false,
   renameOnDoubleClickFolders: false,
   submenus: {},
-  mainMenuCommands: []
+  mainMenuCommands: [],
+  newMenuCommands: [],
+  customIconsFolder: ""
 };
 var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab {
   constructor(app, plugin) {
@@ -4560,6 +5693,15 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
         })
       );
     }
+    new import_obsidian6.Setting(containerEl).setName("Custom SVG icons folder").setDesc(
+      "Path to a folder in your vault containing .svg files. Icons will appear in the icon search by filename. Leave empty to disable."
+    ).addText(
+      (text2) => text2.setPlaceholder("path/to/icons").setValue(this.plugin.settings.customIconsFolder).onChange(async (value) => {
+        this.plugin.settings.customIconsFolder = value;
+        await this.plugin.saveSettings();
+        refreshCustomIcons(this.app, value);
+      })
+    );
     new import_obsidian6.Setting(containerEl).setName("Rename files on double-click").setDesc("Double-click a file to rename it instead of opening it.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.renameOnDoubleClickFiles).onChange(async (value) => {
         this.plugin.settings.renameOnDoubleClickFiles = value;
@@ -4617,10 +5759,13 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
       addBtn.onclick = () => {
         new FolderSuggestModal(this.app, (folder) => {
           if (!this.plugin.settings.archivedPaths.includes(folder.path)) {
+            const orderMap = { ...this.plugin.settings.orderMap };
+            delete orderMap[folder.path];
             this.plugin.settings.archivedPaths = [
               ...this.plugin.settings.archivedPaths,
               folder.path
             ];
+            this.plugin.settings.orderMap = orderMap;
             this.plugin.saveSettings();
             renderArchived.call(this);
           }
@@ -4771,7 +5916,7 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
         };
         const entriesDiv = sectionDiv.createDiv();
         for (let i = 0; i < entries.length; i++) {
-          renderEntryRow(entriesDiv, entries, i, () => this.plugin.settings.submenus[sectionName]);
+          renderEntryRow.call(this, entriesDiv, entries, i, () => this.plugin.settings.submenus[sectionName]);
         }
         const addEntryRow = sectionDiv.createDiv();
         addEntryRow.style.marginTop = "4px";
@@ -4796,7 +5941,7 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
       mainDesc.empty();
       const list = this.plugin.settings.mainMenuCommands;
       for (let i = 0; i < list.length; i++) {
-        renderEntryRow(mainDesc, list, i, () => this.plugin.settings.mainMenuCommands);
+        renderEntryRow.call(this, mainDesc, list, i, () => this.plugin.settings.mainMenuCommands);
       }
       const addRow = mainDesc.createDiv();
       addRow.style.marginTop = "8px";
@@ -4838,14 +5983,15 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
       const renderIcon = () => {
         iconBtn.empty();
         if (list[index].icon) {
-          (0, import_obsidian6.setIcon)(iconBtn, list[index].icon);
+          setCustomIcon(iconBtn, list[index].icon, this.app);
         } else {
           iconBtn.setText("?");
         }
       };
       renderIcon();
       iconBtn.onclick = () => {
-        new IconSuggestModal(this.app, (iconName) => {
+        var _a;
+        new IconSuggestModal(this.app, (_a = this.plugin.settings.customIconsFolder) != null ? _a : "", (iconName) => {
           list[index].icon = iconName;
           getList();
           renderIcon();
@@ -4903,6 +6049,33 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
         await this.plugin.saveSettings();
       };
     }
+    containerEl.createEl("h3", { text: "New menu commands" });
+    containerEl.createEl("p", {
+      text: 'Commands shown in the "New..." submenu, right after "New note" and "New folder" in the context menu.',
+      cls: "setting-item-description"
+    });
+    const newDesc = containerEl.createDiv();
+    newDesc.style.marginBottom = "8px";
+    function renderNewCommands() {
+      newDesc.empty();
+      const list = this.plugin.settings.newMenuCommands;
+      for (let i = 0; i < list.length; i++) {
+        renderEntryRow.call(this, newDesc, list, i, () => this.plugin.settings.newMenuCommands);
+      }
+      const addRow = newDesc.createDiv();
+      addRow.style.marginTop = "8px";
+      const addBtn = addRow.createEl("button");
+      addBtn.textContent = "+ Add command";
+      addBtn.onclick = async () => {
+        this.plugin.settings.newMenuCommands = [
+          ...this.plugin.settings.newMenuCommands,
+          { label: "New command", commandId: "" }
+        ];
+        await this.plugin.saveSettings();
+        renderNewCommands.call(this);
+      };
+    }
+    renderNewCommands.call(this);
     renderSubmenus.call(this);
     renderMainCommands.call(this);
   }
@@ -4920,8 +6093,7 @@ var SimpleNavigatorPlugin = class extends import_obsidian7.Plugin {
     }
     delete this.settings.customCommands;
     delete this.settings.customTemplates;
-    this.settings = cleanUpSettings(this.settings, this.app.vault);
-    await this.saveSettings();
+    refreshCustomIcons(this.app, this.settings.customIconsFolder);
     this.registerView(SIMPLE_NAVIGATOR_VIEW, (leaf) => {
       return new SimpleNavigatorView(leaf, this);
     });

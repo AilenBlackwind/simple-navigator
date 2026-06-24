@@ -1,4 +1,28 @@
-import { App, FuzzySuggestModal, FuzzyMatch, Command, TFolder, setIcon } from "obsidian";
+import { App, FuzzySuggestModal, FuzzyMatch, Command, TFolder, TFile, setIcon } from "obsidian";
+import { ICON_LIST } from "./generated/icon-list";
+import { CUSTOM_ICON_PREFIX, customSvgContent, setCustomIcon } from "./utils";
+
+let cachedCustomItems: string[] = [];
+
+export async function refreshCustomIcons(app: App, folderPath: string) {
+  cachedCustomItems = [];
+  customSvgContent.clear();
+  if (!folderPath) return;
+  try {
+    const adapter = app.vault.adapter;
+    const exists = await adapter.exists(folderPath);
+    if (!exists) return;
+    const entries = await adapter.list(folderPath);
+    for (const filePath of entries.files) {
+      if (filePath.toLowerCase().endsWith(".svg")) {
+        const svg = await adapter.read(filePath);
+        const key = `${CUSTOM_ICON_PREFIX}${filePath}`;
+        cachedCustomItems.push(key);
+        customSvgContent.set(key, svg);
+      }
+    }
+  } catch {}
+}
 
 export class CommandSuggestModal extends FuzzySuggestModal<Command> {
   private onSelect: (command: Command) => void;
@@ -27,58 +51,10 @@ export class CommandSuggestModal extends FuzzySuggestModal<Command> {
   }
 }
 
-const ICON_LIST = [
-  "file", "file-text", "file-plus", "file-minus", "file-search",
-  "folder", "folder-open", "folder-plus", "folder-minus",
-  "home", "search", "settings", "cog", "bell", "bookmark",
-  "star", "heart", "flame", "flag", "award",
-  "book", "book-open", "bookmark", "code", "terminal",
-  "feather", "globe", "anchor", "compass", "map", "map-pin",
-  "image", "music", "video", "camera", "film",
-  "edit", "pencil", "pen-tool", "eraser", "scissors",
-  "check", "check-circle", "check-square", "x", "x-circle", "x-square",
-  "plus", "plus-circle", "plus-square", "minus", "minus-circle",
-  "trash", "trash-2", "archive", "inbox", "mail",
-  "copy", "clipboard", "save", "printer", "share", "share-2",
-  "link", "link-2", "external-link", "paperclip", "hash",
-  "lock", "unlock", "key", "shield", "shield-off",
-  "eye", "eye-off", "search", "zoom-in", "zoom-out",
-  "sun", "moon", "sunrise", "sunset", "lightbulb",
-  "cloud", "cloud-drizzle", "cloud-snow", "cloud-rain", "cloud-lightning",
-  "circle", "square", "triangle", "hexagon", "diamond",
-  "arrow-up", "arrow-down", "arrow-left", "arrow-right",
-  "chevron-up", "chevron-down", "chevron-left", "chevron-right",
-  "chevrons-up", "chevrons-down", "chevrons-left", "chevrons-right",
-  "move", "maximize", "minimize", "expand", "collapse",
-  "list", "grid", "columns", "rows", "table",
-  "menu", "more-horizontal", "more-vertical", "sidebar",
-  "panel-left", "panel-right", "panel-top", "panel-bottom",
-  "alert-circle", "alert-triangle", "help-circle", "info", "question-mark",
-  "refresh-cw", "refresh-ccw", "rotate-cw", "rotate-ccw", "sync",
-  "download", "upload", "log-in", "log-out", "user",
-  "users", "user-plus", "user-minus", "user-check", "user-x",
-  "at-sign", "mail", "message-circle", "message-square", "send",
-  "phone", "smartphone", "tablet", "monitor", "tv",
-  "clock", "timer", "calendar", "watch", "alarm-clock",
-  "wifi", "wifi-off", "bluetooth", "signal", "cast",
-  "battery", "battery-charging", "power", "plug", "zap",
-  "database", "server", "hard-drive", "cpu", "layers",
-  "git-branch", "git-commit", "git-merge", "git-pull-request", "github",
-  "heading", "bold", "italic", "underline", "type",
-  "palette", "brush", "droplet", "paintbrush", "swatch-book",
-  "target", "crosshair", "ruler", "compass", "navigation", "navigation-2",
-  "volume", "volume-1", "volume-2", "volume-x", "headphones", "speaker",
-  "mic", "mic-off", "radio", "disc", "music",
-  "play", "pause", "stop-circle", "rewind", "fast-forward",
-  "shuffle", "repeat", "skip-back", "skip-forward",
-  "percent", "hash", "at-sign", "slash", "bar-chart", "pie-chart",
-  "trending-up", "trending-down", "activity", "sliders",
-];
-
 export class IconSuggestModal extends FuzzySuggestModal<string> {
   private onSelect: (icon: string) => void;
 
-  constructor(app: App, onSelect: (icon: string) => void) {
+  constructor(app: App, customIconsFolder: string, onSelect: (icon: string) => void) {
     super(app);
     this.onSelect = onSelect;
     this.setPlaceholder("Type to search for an icon...");
@@ -90,10 +66,13 @@ export class IconSuggestModal extends FuzzySuggestModal<string> {
   }
 
   getItems(): string[] {
-    return ICON_LIST;
+    return [...ICON_LIST, ...cachedCustomItems];
   }
 
   getItemText(icon: string): string {
+    if (icon.startsWith(CUSTOM_ICON_PREFIX)) {
+      return icon.slice(CUSTOM_ICON_PREFIX.length).replace(/\.svg$/i, "");
+    }
     return icon;
   }
 
@@ -107,8 +86,12 @@ export class IconSuggestModal extends FuzzySuggestModal<string> {
     iconEl.style.width = "16px";
     iconEl.style.height = "16px";
     iconEl.style.flexShrink = "0";
-    setIcon(iconEl, icon);
-    wrapper.createSpan({ text: icon });
+    iconEl.style.overflow = "hidden";
+    iconEl.style.display = "flex";
+    iconEl.style.alignItems = "center";
+    iconEl.style.justifyContent = "center";
+    setCustomIcon(iconEl, icon, this.app);
+    wrapper.createSpan({ text: this.getItemText(icon) });
   }
 
   onChooseItem(icon: string): void {

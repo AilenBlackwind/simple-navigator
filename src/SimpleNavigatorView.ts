@@ -39,10 +39,6 @@ export class SimpleNavigatorView extends ItemView {
   async onOpen() {
     this.contentEl.innerHTML = "";
 
-    this.addAction("eye", "Toggle hidden files", () => {
-      this.toggleShowHidden();
-    });
-
     const root = this.app.vault.getRoot();
     this.component = new TreeView({
       target: this.contentEl,

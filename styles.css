@@ -1,8 +1,9 @@
 .simple-navigator-tree {
   height: 100%;
   overflow-y: auto;
-  padding: 4px 0;
+  padding: 0 0 4px 0;
   user-select: none;
+  margin-top: 0;
 }
 
 .simple-navigator-tree .nav-folder-title,
@@ -26,16 +27,6 @@
 .simple-navigator-tree .nav-file-title:hover {
   background-color: color-mix(in srgb, var(--sn-color, var(--text-muted)) 8%, transparent);
   color: var(--nav-item-color-hover, var(--text-normal));
-}
-
-.simple-navigator-tree .nav-folder-title,
-.simple-navigator-tree .nav-file-title {
-  cursor: grab;
-}
-
-.simple-navigator-tree .nav-folder-title:active,
-.simple-navigator-tree .nav-file-title:active {
-  cursor: grabbing;
 }
 
 .simple-navigator-tree .sn-drop-target > .nav-folder-title {
@@ -111,17 +102,13 @@
   flex-shrink: 0;
   width: 16px;
   height: 16px;
-  color: var(--collapse-icon-color, var(--text-faint));
+  color: var(--nav-item-color, var(--text-muted));
+  opacity: var(--icon-opacity, 0.6);
 }
 
 .simple-navigator-tree .collapse-icon svg {
   width: 16px;
   height: 16px;
-  stroke-width: 1.5;
-}
-
-body .simple-navigator-tree .nav-folder-title .collapse-icon {
-  color: var(--collapse-icon-color, var(--text-faint)) !important;
 }
 
 .simple-navigator-tree .nav-folder.is-collapsed {
@@ -171,11 +158,11 @@ body .simple-navigator-tree .nav-folder-title .collapse-icon {
 }
 
 @keyframes sn-guide-pulse {
-  0%, 100% { transform: scaleX(1); opacity: 0.5; }
-  50% { transform: scaleX(3); opacity: 1; }
+  0%, 100% { transform: scaleX(1); opacity: 0.25; }
+  50% { transform: scaleX(2.5); opacity: 0.6; }
 }
 
 .sn-guide-line-anim {
   animation: sn-guide-pulse 0.8s ease-in-out infinite;
-  transform-origin: left center;
+  transform-origin: center;
 }

@@ -1,7 +1,7 @@
 import { Plugin, WorkspaceLeaf, TFolder } from "obsidian";
 import { SIMPLE_NAVIGATOR_VIEW, SimpleNavigatorView } from "./SimpleNavigatorView";
 import { PluginSettings, DEFAULT_SETTINGS, SimpleNavigatorSettingTab } from "./settings";
-import { cleanUpSettings } from "./utils";
+import { refreshCustomIcons } from "./modal";
 
 export default class SimpleNavigatorPlugin extends Plugin {
   settings!: PluginSettings;
@@ -16,13 +16,11 @@ export default class SimpleNavigatorPlugin extends Plugin {
         this.settings.submenus["Other"] = rawData.customCommands as any;
       }
     }
-    // Remove old fields from in-memory settings so saveSettings() drops them
+    // Remove old fields from in-memory settings
     delete (this.settings as any).customCommands;
     delete (this.settings as any).customTemplates;
 
-    // Drop settings entries that point to files no longer present in the vault
-    this.settings = cleanUpSettings(this.settings, this.app.vault);
-    await this.saveSettings();
+    refreshCustomIcons(this.app, this.settings.customIconsFolder);
 
     this.registerView(SIMPLE_NAVIGATOR_VIEW, (leaf) => {
       return new SimpleNavigatorView(leaf, this);

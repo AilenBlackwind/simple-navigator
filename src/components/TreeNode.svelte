@@ -1,8 +1,8 @@
 <script lang="ts">
   import { TFile, TFolder, setIcon, Menu } from "obsidian";
   import type { App, TAbstractFile } from "obsidian";
-  import { sortWithOrder, countFiles, getFileIcon, getVisibleExtSet } from "../utils";
-  import { dragState, createDropIndicator, updateDropIndicator, removeDropIndicator, destroyDropIndicator, clearFolderHighlight, highlightFolder, resolveDropTarget, updatePathsOnMove } from "../drag-state";
+  import { sortWithOrder, defaultSortFn, countFiles, getFileIcon, getVisibleExtSet, setCustomIcon } from "../utils";
+  import { dragState, createDropIndicator, updateDropIndicator, removeDropIndicator, destroyDropIndicator, clearFolderHighlight, highlightFolder, resolveDropTarget, updatePathsOnMove, updateAutoScroll } from "../drag-state";
   import type { PluginSettings } from "../settings";
   import { IconSuggestModal } from "../modal";
 
@@ -58,9 +58,12 @@
   $: displayName = extHidden
     ? file.name.slice(0, file.name.lastIndexOf("."))
     : file.name;
+  $: renameValue = !isFolder ? file.name.replace(/^(.+?)\.([^.]+)$/, "$1") : file.name;
 
-  $: rawChildren = isFolder && !isArchived
-    ? sortWithOrder([...(file as TFolder).children], settings.orderMap, file.path, refreshKey)
+  $: rawChildren = isFolder
+    ? isArchived
+      ? [...(file as TFolder).children].sort(defaultSortFn)
+      : sortWithOrder([...(file as TFolder).children], settings.orderMap, file.path, refreshKey)
     : [];
 
   $: children = showHidden
@@ -76,16 +79,15 @@
           : getFileIcon(file.name));
 
   $: if (typeIconEl) {
-    typeIconEl.innerHTML = "";
-    setIcon(typeIconEl, iconId);
+    setCustomIcon(typeIconEl, iconId, app);
   }
-
   $: collapseIconId = settings.folderCollapseIconMap[file.path]?.collapsed || settings.collapseIcon || "chevron-right";
+
   $: collapseIconExpandedId = settings.folderCollapseIconMap[file.path]?.expanded || settings.collapseIconExpanded || "chevron-down";
 
   $: if (collapseIconEl) {
     collapseIconEl.innerHTML = "";
-    setIcon(collapseIconEl, collapsed ? collapseIconId : collapseIconExpandedId);
+    setCustomIcon(collapseIconEl, collapsed ? collapseIconId : collapseIconExpandedId, app);
     const color = settings.colorMap[file.path] || "";
     if (color) {
       collapseIconEl.style.setProperty("color", color, "important");
@@ -147,12 +149,15 @@
   async function saveRename() {
     if (editingPath !== file.path) return;
     const newName = renameInputEl?.value.trim();
-    if (!newName || newName === file.name) {
+    const strippedName = !isFolder ? file.name.replace(/^(.+?)\.([^.]+)$/, "$1") : file.name;
+    if (!newName || newName === strippedName) {
       editingPath = null;
       return;
     }
     const parentPath = file.parent ? file.parent.path : "";
-    const newPath = parentPath ? `${parentPath}/${newName}` : newName;
+    const ext = file instanceof TFile ? file.extension : "";
+    const finalName = ext && !newName.endsWith("." + ext) ? newName + "." + ext : newName;
+    const newPath = parentPath ? `${parentPath}/${finalName}` : finalName;
     const oldPath = file.path;
     const savedSettings = settings;
     try {
@@ -226,7 +231,7 @@
 
     const menu = new Menu();
 
-    if (isFolder && !isArchived) {
+    if (isFolder) {
       menu.addItem((item) =>
         item
           .setTitle("New note")
@@ -251,6 +256,22 @@
             await app.vault.createFolder(path);
           })
       );
+      if (settings.newMenuCommands && settings.newMenuCommands.length > 0) {
+        menu.addItem((item) => {
+          item.setTitle("New...").setIcon("plus-circle");
+          const sub = item.setSubmenu();
+          for (const cmd of settings.newMenuCommands) {
+            if (!cmd.commandId) continue;
+            sub.addItem((s) => {
+              s.setTitle(cmd.label);
+              if (cmd.icon) s.setIcon(cmd.icon);
+              s.onClick(() => {
+                app.commands.executeCommandById(cmd.commandId);
+              });
+            });
+          }
+        });
+      }
       menu.addSeparator();
       menu.addItem((item) =>
         item
@@ -343,6 +364,30 @@
         })
     );
 
+    const singleArchived = !isMultiSelected && isFolder && settings.archivedPaths.includes(file.path);
+    if (isFolder) {
+      const isArchivedFolder = settings.archivedPaths.includes(file.path);
+      menu.addItem((item) =>
+        item
+          .setTitle(isArchivedFolder ? "Unarchive folder" : "Archive folder")
+          .setIcon(isArchivedFolder ? "folder" : "archive")
+          .onClick(async () => {
+            const next = { ...settings };
+            if (isArchivedFolder) {
+              next.archivedPaths = next.archivedPaths.filter((p) => p !== file.path);
+            } else {
+              next.archivedPaths = [...next.archivedPaths, file.path];
+              // Clear orderMap for this folder – archived uses alphabetical sort
+              const om = { ...next.orderMap };
+              delete om[file.path];
+              next.orderMap = om;
+            }
+            settings = next;
+            await onUpdateSettings(settings);
+          })
+      );
+    }
+
     const ctxX = event.clientX;
     const ctxY = event.clientY;
 
@@ -375,16 +420,27 @@
           sub.setTitle("More colors...").setIcon("palette");
           const subsub = sub.setSubmenu();
           for (const color of settings.customColors) {
-            subsub.addItem((s) =>
-              s
-                .setTitle(color)
-                .onClick(async () => {
-                  const next = { ...settings };
-                  next.colorMap = { ...next.colorMap, [file.path]: color };
-                  settings = next;
-                  await onUpdateSettings(settings);
-                })
-            );
+            subsub.addItem((s) => {
+              const frag = document.createDocumentFragment();
+              const circle = document.createElement("span");
+              circle.style.display = "inline-block";
+              circle.style.width = "12px";
+              circle.style.height = "12px";
+              circle.style.borderRadius = "50%";
+              circle.style.backgroundColor = color;
+              circle.style.marginRight = "8px";
+              circle.style.verticalAlign = "middle";
+              circle.style.border = "1px solid var(--background-modifier-border)";
+              frag.appendChild(circle);
+              frag.appendChild(document.createTextNode(color));
+              s.setTitle(frag);
+              s.onClick(async () => {
+                const next = { ...settings };
+                next.colorMap = { ...next.colorMap, [file.path]: color };
+                settings = next;
+                await onUpdateSettings(settings);
+              });
+            });
           }
         });
       }
@@ -425,11 +481,11 @@
           .setTitle("More icons...")
           .setIcon("search")
           .onClick(() => {
-            new IconSuggestModal(app, (iconName) => {
+            new IconSuggestModal(app, settings.customIconsFolder ?? "", async (iconName) => {
               const next = { ...settings };
               next.iconMap = { ...next.iconMap, [file.path]: iconName };
               settings = next;
-              onUpdateSettings(settings);
+              await onUpdateSettings(settings);
             }).open();
           })
       );
@@ -441,83 +497,46 @@
         const submenu = item.setSubmenu();
 
         const currCollapsed = settings.folderCollapseIconMap[file.path]?.collapsed || settings.collapseIcon || "chevron-right";
-        submenu.addItem((sub) => {
-          sub.setTitle(`Collapsed: ${currCollapsed}`).setIcon(currCollapsed);
-          const subsub = sub.setSubmenu();
-          for (const icon of ICON_OPTIONS) {
-            subsub.addItem((s) =>
-              s
-                .setTitle(icon)
-                .setIcon(icon)
-                .onClick(async () => {
-                  const next = { ...settings };
-                  const fcm = { ...next.folderCollapseIconMap };
-                  const current: { collapsed: string; expanded: string } = fcm[file.path] || { collapsed: "", expanded: "" };
-                  fcm[file.path] = { ...current, collapsed: icon };
-                  next.folderCollapseIconMap = fcm;
-                  settings = next;
-                  await onUpdateSettings(settings);
-                })
-            );
-          }
-          subsub.addItem((s) =>
-            s
-              .setTitle("More...")
-              .setIcon("search")
-              .onClick(() => {
-                new IconSuggestModal(app, (iconName) => {
-                  const next = { ...settings };
-                  const fcm = { ...next.folderCollapseIconMap };
-                  const current: { collapsed: string; expanded: string } = fcm[file.path] || { collapsed: "", expanded: "" };
-                  fcm[file.path] = { ...current, collapsed: iconName };
-                  settings = next;
-                  onUpdateSettings(settings);
-                }).open();
-              })
-          );
-        });
-
         const currExpanded = settings.folderCollapseIconMap[file.path]?.expanded || settings.collapseIconExpanded || "chevron-down";
-        submenu.addItem((sub) => {
-          sub.setTitle(`Expanded: ${currExpanded}`).setIcon(currExpanded);
-          const subsub = sub.setSubmenu();
-          for (const icon of ICON_OPTIONS) {
-            subsub.addItem((s) =>
-              s
-                .setTitle(icon)
-                .setIcon(icon)
-                .onClick(async () => {
-                  const next = { ...settings };
-                  const fcm = { ...next.folderCollapseIconMap };
-                  const current: { collapsed: string; expanded: string } = fcm[file.path] || { collapsed: "", expanded: "" };
-                  fcm[file.path] = { ...current, expanded: icon };
-                  next.folderCollapseIconMap = fcm;
-                  settings = next;
-                  await onUpdateSettings(settings);
-                })
-            );
-          }
-          subsub.addItem((s) =>
-            s
-              .setTitle("More...")
-              .setIcon("search")
-              .onClick(() => {
-                new IconSuggestModal(app, (iconName) => {
-                  const next = { ...settings };
-                  const fcm = { ...next.folderCollapseIconMap };
-                  const current: { collapsed: string; expanded: string } = fcm[file.path] || { collapsed: "", expanded: "" };
-                  fcm[file.path] = { ...current, expanded: iconName };
-                  settings = next;
-                  onUpdateSettings(settings);
-                }).open();
-              })
-          );
-        });
+
+        submenu.addItem((sub) =>
+          sub
+            .setTitle(`Collapse icon: ${currCollapsed}`)
+            .setIcon(currCollapsed)
+            .onClick(() => {
+              new IconSuggestModal(app, settings.customIconsFolder ?? "", async (iconName) => {
+                const next = { ...settings };
+                const fcm = { ...next.folderCollapseIconMap };
+                const current: { collapsed: string; expanded: string } = fcm[file.path] || { collapsed: "", expanded: "" };
+                fcm[file.path] = { ...current, collapsed: iconName };
+                next.folderCollapseIconMap = fcm;
+                settings = next;
+                await onUpdateSettings(settings);
+              }).open();
+            })
+        );
+
+        submenu.addItem((sub) =>
+          sub
+            .setTitle(`Expand icon: ${currExpanded}`)
+            .setIcon(currExpanded)
+            .onClick(() => {
+              new IconSuggestModal(app, settings.customIconsFolder ?? "", async (iconName) => {
+                const next = { ...settings };
+                const fcm = { ...next.folderCollapseIconMap };
+                const current: { collapsed: string; expanded: string } = fcm[file.path] || { collapsed: "", expanded: "" };
+                fcm[file.path] = { ...current, expanded: iconName };
+                next.folderCollapseIconMap = fcm;
+                settings = next;
+                await onUpdateSettings(settings);
+              }).open();
+            })
+        );
 
         submenu.addSeparator();
         submenu.addItem((sub) =>
           sub
-            .setTitle("Default (remove)")
+            .setTitle("Reset chevron icons")
             .setIcon("x")
             .onClick(async () => {
               const next = { ...settings };
@@ -597,6 +616,8 @@
 
   function handleDragOver(e: DragEvent) {
     e.stopPropagation();
+    e.dataTransfer!.dropEffect = "move";
+    updateAutoScroll(e.clientY);
 
     const target = resolveDropTarget(e.clientX, e.clientY);
     if (!target) { clearFolderHighlight(); removeDropIndicator(); return; }
@@ -653,7 +674,7 @@
   }
 </script>
 
-  {#if isFolder && !isArchived}
+  {#if isFolder}
   <div class="nav-folder" data-path={file.path} class:is-collapsed={collapsed} class:is-hidden={isHidden} class:is-selected={selectedPaths.has(file.path)}>
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <div
@@ -664,20 +685,20 @@
       on:contextmenu={handleContextMenu}
       on:dragstart={handleDragStart}
       on:dragend={handleDragEnd}
-      style="padding-left: {4 + depth * 20}px;"
+      style="padding-left: {4 + depth * 20}px;display:flex;align-items:center"
       style:color={settings.colorMap[file.path] || undefined}
       style:--sn-color={settings.colorMap[file.path] || undefined}
     >
       {#if settings.enableCollapseIcons}
-      <span class="nav-folder-collapse-indicator collapse-icon" bind:this={collapseIconEl} />
+      <span class="nav-folder-collapse-indicator collapse-icon" bind:this={collapseIconEl} style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;margin:0;padding:0" />
       {/if}
       {#if settings.iconMap[file.path] || !settings.hideDefaultIcons}
-      <span class="nav-file-icon" bind:this={typeIconEl} style:color={iconColor} />
+      <span class="nav-file-icon" bind:this={typeIconEl} style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;margin:0;padding:0;color:{iconColor}" />
       {/if}
       {#if editingPath === file.path}
-      <input class="sn-rename-input" type="text" value={file.name} bind:this={renameInputEl} on:blur={saveRename} on:keydown={handleRenameKeydown} />
+      <input class="sn-rename-input" type="text" value={renameValue} bind:this={renameInputEl} on:blur={saveRename} on:keydown={handleRenameKeydown} />
       {:else}
-      <div class="nav-folder-title-content">{file.name}</div>
+      <div class="nav-folder-title-content">{isArchived ? `${displayName} (${fileCount})` : file.name}</div>
       {/if}
     </div>
     <div class="nav-folder-children" data-folder-path={file.path} style:--sn-color={settings.colorMap[file.path] || undefined} style:--guide-offset={4 + depth * 20 + 8 + "px"} style:--guide-width={1 / window.devicePixelRatio + "px"} on:dragover|preventDefault={handleDragOver} on:drop={handleDrop} on:dragleave={handleDragLeave}>
@@ -699,31 +720,6 @@
       {/each}
     </div>
   </div>
-{:else if isArchived}
-  <div class="nav-file" data-path={file.path} class:is-hidden={isHidden} class:is-selected={selectedPaths.has(file.path)}>
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <div
-      class="nav-file-title"
-      draggable="true"
-      on:click={handleClick}
-      on:dblclick={handleDblClick}
-      on:contextmenu={handleContextMenu}
-      on:dragstart={handleDragStart}
-      on:dragend={handleDragEnd}
-      style="padding-left: {4 + depth * 20}px;"
-      style:color={settings.colorMap[file.path] || undefined}
-      style:--sn-color={settings.colorMap[file.path] || undefined}
-    >
-      {#if settings.iconMap[file.path] || !settings.hideDefaultIcons}
-      <span class="nav-file-icon" bind:this={typeIconEl} style:color={iconColor} />
-      {/if}
-      {#if editingPath === file.path}
-      <input class="sn-rename-input" type="text" value={file.name} bind:this={renameInputEl} on:blur={saveRename} on:keydown={handleRenameKeydown} />
-      {:else}
-      <div class="nav-file-title-content">{displayName} ({fileCount})</div>
-      {/if}
-    </div>
-  </div>
 {:else}
   <div class="nav-file" data-path={file.path} class:is-active={isActive} class:is-hidden={isHidden} class:is-selected={selectedPaths.has(file.path)}>
     <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -735,15 +731,15 @@
       on:contextmenu={handleContextMenu}
       on:dragstart={handleDragStart}
       on:dragend={handleDragEnd}
-      style="padding-left: {4 + depth * 20}px;"
+      style="padding-left: {4 + depth * 20}px;display:flex;align-items:center"
       style:color={settings.colorMap[file.path] || undefined}
       style:--sn-color={settings.colorMap[file.path] || undefined}
     >
       {#if settings.iconMap[file.path] || !settings.hideDefaultIcons}
-      <span class="nav-file-icon" bind:this={typeIconEl} style:color={iconColor} />
+      <span class="nav-file-icon" bind:this={typeIconEl} style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;margin:0;padding:0;color:{iconColor}" />
       {/if}
       {#if editingPath === file.path}
-      <input class="sn-rename-input" type="text" value={file.name} bind:this={renameInputEl} on:blur={saveRename} on:keydown={handleRenameKeydown} />
+      <input class="sn-rename-input" type="text" value={renameValue} bind:this={renameInputEl} on:blur={saveRename} on:keydown={handleRenameKeydown} />
       {:else}
       <div class="nav-file-title-content">{displayName}</div>
       {/if}

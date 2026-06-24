@@ -3,7 +3,7 @@
   import { onMount, onDestroy } from "svelte";
   import TreeNode from "./TreeNode.svelte";
   import { sortWithOrder } from "../utils";
-  import { dragState, createDropIndicator, updateDropIndicator, removeDropIndicator, destroyDropIndicator, clearFolderHighlight, highlightFolder, resolveDropTarget, updatePathsOnMove } from "../drag-state";
+  import { dragState, createDropIndicator, updateDropIndicator, removeDropIndicator, destroyDropIndicator, clearFolderHighlight, highlightFolder, resolveDropTarget, updatePathsOnMove, updateAutoScroll, DROP_ZONE_BUFFER } from "../drag-state";
   import type { PluginSettings } from "../settings";
 
   export let app: App;
@@ -59,6 +59,7 @@
 
   let keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   let rootContextHandler: ((e: MouseEvent) => void) | null = null;
+  let viewContentEl: HTMLElement | null = null;
 
   $: rawChildren = sortWithOrder(
     [...rootFolder.children],
@@ -74,7 +75,9 @@
     : rawChildren.filter((c) => !hiddenSet.has(c.path));
 
   function handleRootDragOver(e: DragEvent) {
+    updateAutoScroll(e.clientY);
     const target = resolveDropTarget(e.clientX, e.clientY);
+
     if (!target) { clearFolderHighlight(); removeDropIndicator(); return; }
 
     dragState.toPath = target.containerPath;
@@ -88,7 +91,6 @@
       return;
     }
 
-    // Root is special — no container guide line animation
     clearFolderHighlight();
     if (target.itemEl) {
       updateDropIndicator(target.itemEl, e.clientX, e.clientY);
@@ -122,6 +124,68 @@
     clearFolderHighlight();
   }
 
+  function handleDocumentDragOver(e: DragEvent) {
+    if (!dragState.itemPath) return;
+    e.dataTransfer!.dropEffect = "move";
+    const tree = document.querySelector(".simple-navigator-tree");
+    if (!tree) return;
+    const tr = tree.getBoundingClientRect();
+    if (e.clientY < tr.top - DROP_ZONE_BUFFER || e.clientY > tr.bottom) return;
+    // Events within the tree bounds are handled by TreeNode's own handlers
+    if (e.clientY >= tr.top) return;
+    e.preventDefault();
+    handleRootDragOver(e);
+  }
+
+  function handleDocumentDragEnter(e: DragEvent) {
+    if (!dragState.itemPath) return;
+    e.dataTransfer!.dropEffect = "move";
+    e.preventDefault();
+  }
+
+  function handleDocumentDrop(e: DragEvent) {
+    if (!dragState.itemPath) return;
+    e.dataTransfer!.dropEffect = "move";
+    const tree = document.querySelector(".simple-navigator-tree");
+    if (!tree) return;
+    if (tree.contains(e.target as Node)) return;
+    const tr = tree.getBoundingClientRect();
+    if (e.clientY < tr.top - DROP_ZONE_BUFFER || e.clientY > tr.bottom) return;
+    e.preventDefault();
+    handleRootDrop(e);
+  }
+
+  function isAboveTree(clientY: number): boolean {
+    const tree = document.querySelector(".simple-navigator-tree");
+    if (!tree) return false;
+    const tr = tree.getBoundingClientRect();
+    return clientY >= tr.top - DROP_ZONE_BUFFER && clientY < tr.top;
+  }
+
+  function handleViewContentDragEnter(e: DragEvent) {
+    if (!dragState.itemPath) return;
+    if (!isAboveTree(e.clientY)) return;
+    e.dataTransfer!.dropEffect = "move";
+    e.preventDefault();
+  }
+
+  function handleViewContentDragOver(e: DragEvent) {
+    if (!dragState.itemPath) return;
+    if (!isAboveTree(e.clientY)) return;
+    e.dataTransfer!.dropEffect = "move";
+    e.preventDefault();
+    handleRootDragOver(e);
+  }
+
+  function handleViewContentDrop(e: DragEvent) {
+    if (!dragState.itemPath) return;
+    if (isAboveTree(e.clientY)) {
+      e.dataTransfer!.dropEffect = "move";
+      e.preventDefault();
+      handleRootDrop(e);
+    }
+  }
+
   async function handleSortEnd(detail: {
     fromPath: string;
     toPath: string;
@@ -130,6 +194,9 @@
     itemPath: string;
   }) {
     if (detail.fromPath === detail.toPath && detail.newIndex >= 0) {
+      // Archived folders use alphabetical sort — skip orderMap
+      if (detail.fromPath && settings.archivedPaths.includes(detail.fromPath)) return;
+
       const container = document.querySelector(
         `.simple-navigator-tree [data-folder-path="${detail.fromPath}"]`
       ) as HTMLElement | null;
@@ -213,10 +280,18 @@
             if (n) sourceNames.push(n);
           }
         }
-        newOrderMap[detail.fromPath] = sourceNames;
+        if (!detail.fromPath || !settings.archivedPaths.includes(detail.fromPath)) {
+          newOrderMap[detail.fromPath] = sourceNames;
+        } else {
+          delete newOrderMap[detail.fromPath];
+        }
       } else {
-        newOrderMap[detail.fromPath] = (sourceFolder?.children || []).map((c) => c.name);
+        if (!detail.fromPath || !settings.archivedPaths.includes(detail.fromPath)) {
+          newOrderMap[detail.fromPath] = (sourceFolder?.children || []).map((c) => c.name);
+        }
       }
+
+      const isArchivedTarget = detail.toPath && settings.archivedPaths.includes(detail.toPath);
 
       const targetContainer = document.querySelector(
         `.simple-navigator-tree [data-folder-path="${detail.toPath}"]`
@@ -232,7 +307,7 @@
             if (n) orderedNames.push(n);
           }
         }
-        if (detail.newIndex >= 0) {
+        if (detail.newIndex >= 0 && !isArchivedTarget) {
           const itemName = file.name;
           const idx = orderedNames.indexOf(itemName);
           if (idx >= 0) {
@@ -243,7 +318,7 @@
         }
       } else {
         orderedNames = (targetFolder?.children || []).map((c) => c.name);
-        if (detail.newIndex >= 0) {
+        if (detail.newIndex >= 0 && !isArchivedTarget) {
           const itemName = file.name;
           const idx = orderedNames.indexOf(itemName);
           if (idx >= 0) {
@@ -253,7 +328,9 @@
           orderedNames.splice(safeIndex, 0, itemName);
         }
       }
-      newOrderMap[detail.toPath] = orderedNames;
+      if (!isArchivedTarget) {
+        newOrderMap[detail.toPath] = orderedNames;
+      }
 
       settings = { ...settings, orderMap: newOrderMap };
       await onUpdateSettings(settings);
@@ -285,6 +362,22 @@
           await app.vault.createFolder(path);
         })
     );
+    if (settings.newMenuCommands && settings.newMenuCommands.length > 0) {
+      menu.addItem((item) => {
+        item.setTitle("New...").setIcon("plus-circle");
+        const sub = item.setSubmenu();
+        for (const cmd of settings.newMenuCommands) {
+          if (!cmd.commandId) continue;
+          sub.addItem((s) => {
+            s.setTitle(cmd.label);
+            if (cmd.icon) s.setIcon(cmd.icon);
+            s.onClick(() => {
+              app.commands.executeCommandById(cmd.commandId);
+            });
+          });
+        }
+      });
+    }
     for (const [sectionName, entries] of Object.entries(settings.submenus)) {
       if (entries.length === 0) continue;
       menu.addItem((item) => {
@@ -365,17 +458,37 @@
       handleRootContextMenu(e);
     };
     document.addEventListener("contextmenu", rootContextHandler);
+    document.addEventListener("dragover", handleDocumentDragOver, true);
+    document.addEventListener("dragenter", handleDocumentDragEnter, true);
+    document.addEventListener("drop", handleDocumentDrop, true);
+
+    // Also add handlers directly on .view-content to catch events at the target phase
+    const treeEl = document.querySelector(".simple-navigator-tree");
+    viewContentEl = treeEl?.closest(".view-content") as HTMLElement | null;
+    if (viewContentEl) {
+      viewContentEl.addEventListener("dragover", handleViewContentDragOver);
+      viewContentEl.addEventListener("dragenter", handleViewContentDragEnter);
+      viewContentEl.addEventListener("drop", handleViewContentDrop);
+    }
   });
 
   onDestroy(() => {
     if (activeLeafRef) {
       app.workspace.offref(activeLeafRef);
     }
+    document.removeEventListener("dragover", handleDocumentDragOver, true);
+    document.removeEventListener("dragenter", handleDocumentDragEnter, true);
+    document.removeEventListener("drop", handleDocumentDrop, true);
     if (keydownHandler) {
       document.removeEventListener("keydown", keydownHandler);
     }
     if (rootContextHandler) {
       document.removeEventListener("contextmenu", rootContextHandler);
+    }
+    if (viewContentEl) {
+      viewContentEl.removeEventListener("dragover", handleViewContentDragOver);
+      viewContentEl.removeEventListener("dragenter", handleViewContentDragEnter);
+      viewContentEl.removeEventListener("drop", handleViewContentDrop);
     }
   });
 </script>
@@ -383,8 +496,11 @@
 <div
   class="simple-navigator-tree nav-folder mod-root"
   on:click|self={clearSelection}
+  on:dragover|preventDefault={handleRootDragOver}
+  on:drop={handleRootDrop}
+  on:dragleave={handleRootDragLeave}
 >
-  <div class="nav-folder-children" data-folder-path="" on:dragover|preventDefault={handleRootDragOver} on:drop={handleRootDrop} on:dragleave={handleRootDragLeave}>
+  <div class="nav-folder-children" data-folder-path="">
     {#each children as child (child.path)}
       <TreeNode
         {app}

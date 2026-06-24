@@ -1,5 +1,6 @@
 import { PluginSettingTab, Setting, App, setIcon } from "obsidian";
-import { CommandSuggestModal, IconSuggestModal, FolderSuggestModal } from "./modal";
+import { CommandSuggestModal, IconSuggestModal, FolderSuggestModal, refreshCustomIcons } from "./modal";
+import { setCustomIcon } from "./utils";
 import type SimpleNavigatorPlugin from "./main";
 
 export interface SubmenuEntry {
@@ -29,6 +30,8 @@ export interface PluginSettings {
   renameOnDoubleClickFolders: boolean;
   submenus: Record<string, SubmenuEntry[]>;
   mainMenuCommands: SubmenuEntry[];
+  newMenuCommands: SubmenuEntry[];
+  customIconsFolder: string;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -52,6 +55,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   renameOnDoubleClickFolders: false,
   submenus: {},
   mainMenuCommands: [],
+  newMenuCommands: [],
+  customIconsFolder: "",
 };
 
 export class SimpleNavigatorSettingTab extends PluginSettingTab {
@@ -153,6 +158,22 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
     }
 
     new Setting(containerEl)
+      .setName("Custom SVG icons folder")
+      .setDesc(
+        "Path to a folder in your vault containing .svg files. Icons will appear in the icon search by filename. Leave empty to disable."
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("path/to/icons")
+          .setValue(this.plugin.settings.customIconsFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.customIconsFolder = value;
+            await this.plugin.saveSettings();
+            refreshCustomIcons(this.app, value);
+          })
+      );
+
+    new Setting(containerEl)
       .setName("Rename files on double-click")
       .setDesc("Double-click a file to rename it instead of opening it.")
       .addToggle((toggle) =>
@@ -228,10 +249,13 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       addBtn.onclick = () => {
         new FolderSuggestModal(this.app, (folder) => {
           if (!this.plugin.settings.archivedPaths.includes(folder.path)) {
+            const orderMap = { ...this.plugin.settings.orderMap };
+            delete orderMap[folder.path];
             this.plugin.settings.archivedPaths = [
               ...this.plugin.settings.archivedPaths,
               folder.path,
             ];
+            this.plugin.settings.orderMap = orderMap;
             this.plugin.saveSettings();
             renderArchived.call(this);
           }
@@ -408,7 +432,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
         const entriesDiv = sectionDiv.createDiv();
 
         for (let i = 0; i < entries.length; i++) {
-          renderEntryRow(entriesDiv, entries, i, () => this.plugin.settings.submenus[sectionName]);
+          renderEntryRow.call(this, entriesDiv, entries, i, () => this.plugin.settings.submenus[sectionName]);
         }
 
         const addEntryRow = sectionDiv.createDiv();
@@ -440,7 +464,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       const list = this.plugin.settings.mainMenuCommands;
 
       for (let i = 0; i < list.length; i++) {
-        renderEntryRow(mainDesc, list, i, () => this.plugin.settings.mainMenuCommands);
+        renderEntryRow.call(this, mainDesc, list, i, () => this.plugin.settings.mainMenuCommands);
       }
 
       const addRow = mainDesc.createDiv();
@@ -492,14 +516,14 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       const renderIcon = () => {
         iconBtn.empty();
         if (list[index].icon) {
-          setIcon(iconBtn, list[index].icon!);
+          setCustomIcon(iconBtn, list[index].icon!, this.app);
         } else {
           iconBtn.setText("?");
         }
       };
       renderIcon();
       iconBtn.onclick = () => {
-        new IconSuggestModal(this.app, (iconName) => {
+        new IconSuggestModal(this.app, this.plugin.settings.customIconsFolder ?? "", (iconName) => {
           list[index].icon = iconName;
           getList();
           renderIcon();
@@ -562,6 +586,40 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       };
     }
 
+    // --- New menu commands ---
+    containerEl.createEl("h3", { text: "New menu commands" });
+    containerEl.createEl("p", {
+      text: "Commands shown in the \"New...\" submenu, right after \"New note\" and \"New folder\" in the context menu.",
+      cls: "setting-item-description",
+    });
+
+    const newDesc = containerEl.createDiv();
+    newDesc.style.marginBottom = "8px";
+
+    function renderNewCommands() {
+      newDesc.empty();
+      const list = this.plugin.settings.newMenuCommands;
+
+      for (let i = 0; i < list.length; i++) {
+        renderEntryRow.call(this, newDesc, list, i, () => this.plugin.settings.newMenuCommands);
+      }
+
+      const addRow = newDesc.createDiv();
+      addRow.style.marginTop = "8px";
+
+      const addBtn = addRow.createEl("button");
+      addBtn.textContent = "+ Add command";
+      addBtn.onclick = async () => {
+        this.plugin.settings.newMenuCommands = [
+          ...this.plugin.settings.newMenuCommands,
+          { label: "New command", commandId: "" },
+        ];
+        await this.plugin.saveSettings();
+        renderNewCommands.call(this);
+      };
+    }
+
+    renderNewCommands.call(this);
     renderSubmenus.call(this);
     renderMainCommands.call(this);
   }
