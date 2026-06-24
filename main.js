@@ -4794,7 +4794,7 @@ var TreeNode_default = TreeNode;
 // src/components/TreeView.svelte
 function get_each_context2(ctx, list, i) {
   const child_ctx = ctx.slice();
-  child_ctx[31] = list[i];
+  child_ctx[25] = list[i];
   return child_ctx;
 }
 function create_each_block2(key_1, ctx) {
@@ -4809,7 +4809,7 @@ function create_each_block2(key_1, ctx) {
       ),
       file: (
         /*child*/
-        ctx[31]
+        ctx[25]
       ),
       depth: 0,
       activeFilePath: (
@@ -4866,35 +4866,35 @@ function create_each_block2(key_1, ctx) {
     p(new_ctx, dirty) {
       ctx = new_ctx;
       const treenode_changes = {};
-      if (dirty[0] & /*app*/
+      if (dirty & /*app*/
       2)
         treenode_changes.app = /*app*/
         ctx[1];
-      if (dirty[0] & /*children*/
+      if (dirty & /*children*/
       128)
         treenode_changes.file = /*child*/
-        ctx[31];
-      if (dirty[0] & /*activeFilePath*/
+        ctx[25];
+      if (dirty & /*activeFilePath*/
       32)
         treenode_changes.activeFilePath = /*activeFilePath*/
         ctx[5];
-      if (dirty[0] & /*settings*/
+      if (dirty & /*settings*/
       1)
         treenode_changes.settings = /*settings*/
         ctx[0];
-      if (dirty[0] & /*showHidden*/
+      if (dirty & /*showHidden*/
       4)
         treenode_changes.showHidden = /*showHidden*/
         ctx[2];
-      if (dirty[0] & /*refreshKey*/
+      if (dirty & /*refreshKey*/
       8)
         treenode_changes.refreshKey = /*refreshKey*/
         ctx[3];
-      if (dirty[0] & /*selectedPaths*/
+      if (dirty & /*selectedPaths*/
       64)
         treenode_changes.selectedPaths = /*selectedPaths*/
         ctx[6];
-      if (dirty[0] & /*onUpdateSettings*/
+      if (dirty & /*onUpdateSettings*/
       16)
         treenode_changes.onUpdateSettings = /*onUpdateSettings*/
         ctx[4];
@@ -4932,7 +4932,7 @@ function create_fragment2(ctx) {
   );
   const get_key = (ctx2) => (
     /*child*/
-    ctx2[31].path
+    ctx2[25].path
   );
   for (let i = 0; i < each_value.length; i += 1) {
     let child_ctx = get_each_context2(ctx, each_value, i);
@@ -4985,8 +4985,8 @@ function create_fragment2(ctx) {
         mounted = true;
       }
     },
-    p(ctx2, dirty) {
-      if (dirty[0] & /*app, children, activeFilePath, settings, showHidden, refreshKey, selectedPaths, handleSelect, clearSelection, handleSortEnd, onUpdateSettings*/
+    p(ctx2, [dirty]) {
+      if (dirty & /*app, children, activeFilePath, settings, showHidden, refreshKey, selectedPaths, handleSelect, clearSelection, handleSortEnd, onUpdateSettings*/
       9215) {
         each_value = ensure_array_like(
           /*children*/
@@ -5072,7 +5072,6 @@ function instance2($$self, $$props, $$invalidate) {
   }
   let keydownHandler = null;
   let rootContextHandler = null;
-  let viewContentEl = null;
   function handleRootDragOver(e) {
     updateAutoScroll(e.clientY);
     const target = resolveDropTarget(e.clientX, e.clientY);
@@ -5131,31 +5130,24 @@ function instance2($$self, $$props, $$invalidate) {
       return;
     clearFolderHighlight();
   }
-  function handleDocumentDragOver(e) {
+  function handleWindowDragOver(e) {
     if (!dragState.itemPath)
       return;
-    e.dataTransfer.dropEffect = "move";
     const tree = document.querySelector(".simple-navigator-tree");
     if (!tree)
       return;
     const tr = tree.getBoundingClientRect();
     if (e.clientY < tr.top - DROP_ZONE_BUFFER || e.clientY > tr.bottom)
       return;
-    if (e.clientY >= tr.top)
+    if (e.clientY >= tr.top && e.clientY <= tr.bottom)
       return;
+    e.stopPropagation();
     e.preventDefault();
     handleRootDragOver(e);
   }
-  function handleDocumentDragEnter(e) {
+  function handleWindowDrop(e) {
     if (!dragState.itemPath)
       return;
-    e.dataTransfer.dropEffect = "move";
-    e.preventDefault();
-  }
-  function handleDocumentDrop(e) {
-    if (!dragState.itemPath)
-      return;
-    e.dataTransfer.dropEffect = "move";
     const tree = document.querySelector(".simple-navigator-tree");
     if (!tree)
       return;
@@ -5164,41 +5156,9 @@ function instance2($$self, $$props, $$invalidate) {
     const tr = tree.getBoundingClientRect();
     if (e.clientY < tr.top - DROP_ZONE_BUFFER || e.clientY > tr.bottom)
       return;
+    e.stopPropagation();
     e.preventDefault();
     handleRootDrop(e);
-  }
-  function isAboveTree(clientY) {
-    const tree = document.querySelector(".simple-navigator-tree");
-    if (!tree)
-      return false;
-    const tr = tree.getBoundingClientRect();
-    return clientY >= tr.top - DROP_ZONE_BUFFER && clientY < tr.top;
-  }
-  function handleViewContentDragEnter(e) {
-    if (!dragState.itemPath)
-      return;
-    if (!isAboveTree(e.clientY))
-      return;
-    e.dataTransfer.dropEffect = "move";
-    e.preventDefault();
-  }
-  function handleViewContentDragOver(e) {
-    if (!dragState.itemPath)
-      return;
-    if (!isAboveTree(e.clientY))
-      return;
-    e.dataTransfer.dropEffect = "move";
-    e.preventDefault();
-    handleRootDragOver(e);
-  }
-  function handleViewContentDrop(e) {
-    if (!dragState.itemPath)
-      return;
-    if (isAboveTree(e.clientY)) {
-      e.dataTransfer.dropEffect = "move";
-      e.preventDefault();
-      handleRootDrop(e);
-    }
   }
   function handleSortEnd(detail) {
     return __awaiter(this, void 0, void 0, function* () {
@@ -5438,34 +5398,20 @@ function instance2($$self, $$props, $$invalidate) {
       handleRootContextMenu(e);
     };
     document.addEventListener("contextmenu", rootContextHandler);
-    document.addEventListener("dragover", handleDocumentDragOver, true);
-    document.addEventListener("dragenter", handleDocumentDragEnter, true);
-    document.addEventListener("drop", handleDocumentDrop, true);
-    const treeEl = document.querySelector(".simple-navigator-tree");
-    viewContentEl = treeEl === null || treeEl === void 0 ? void 0 : treeEl.closest(".view-content");
-    if (viewContentEl) {
-      viewContentEl.addEventListener("dragover", handleViewContentDragOver);
-      viewContentEl.addEventListener("dragenter", handleViewContentDragEnter);
-      viewContentEl.addEventListener("drop", handleViewContentDrop);
-    }
+    window.addEventListener("dragover", handleWindowDragOver, true);
+    window.addEventListener("drop", handleWindowDrop, true);
   });
   onDestroy(() => {
     if (activeLeafRef) {
       app.workspace.offref(activeLeafRef);
     }
-    document.removeEventListener("dragover", handleDocumentDragOver, true);
-    document.removeEventListener("dragenter", handleDocumentDragEnter, true);
-    document.removeEventListener("drop", handleDocumentDrop, true);
+    window.removeEventListener("dragover", handleWindowDragOver, true);
+    window.removeEventListener("drop", handleWindowDrop, true);
     if (keydownHandler) {
       document.removeEventListener("keydown", keydownHandler);
     }
     if (rootContextHandler) {
       document.removeEventListener("contextmenu", rootContextHandler);
-    }
-    if (viewContentEl) {
-      viewContentEl.removeEventListener("dragover", handleViewContentDragOver);
-      viewContentEl.removeEventListener("dragenter", handleViewContentDragEnter);
-      viewContentEl.removeEventListener("drop", handleViewContentDrop);
     }
   });
   $$self.$$set = ($$props2) => {
@@ -5483,17 +5429,17 @@ function instance2($$self, $$props, $$invalidate) {
       $$invalidate(4, onUpdateSettings = $$props2.onUpdateSettings);
   };
   $$self.$$.update = () => {
-    if ($$self.$$.dirty[0] & /*rootFolder, settings, refreshKey*/
+    if ($$self.$$.dirty & /*rootFolder, settings, refreshKey*/
     16393) {
       $:
         $$invalidate(16, rawChildren = sortWithOrder([...rootFolder.children], settings.orderMap, "", refreshKey));
     }
-    if ($$self.$$.dirty[0] & /*settings*/
+    if ($$self.$$.dirty & /*settings*/
     1) {
       $:
         $$invalidate(15, hiddenSet = new Set(settings.hiddenPaths));
     }
-    if ($$self.$$.dirty[0] & /*showHidden, rawChildren, hiddenSet*/
+    if ($$self.$$.dirty & /*showHidden, rawChildren, hiddenSet*/
     98308) {
       $:
         $$invalidate(7, children2 = showHidden ? rawChildren : rawChildren.filter((c) => !hiddenSet.has(c.path)));
@@ -5522,23 +5468,14 @@ function instance2($$self, $$props, $$invalidate) {
 var TreeView = class extends SvelteComponent {
   constructor(options) {
     super();
-    init(
-      this,
-      options,
-      instance2,
-      create_fragment2,
-      safe_not_equal,
-      {
-        app: 1,
-        rootFolder: 14,
-        settings: 0,
-        showHidden: 2,
-        refreshKey: 3,
-        onUpdateSettings: 4
-      },
-      null,
-      [-1, -1]
-    );
+    init(this, options, instance2, create_fragment2, safe_not_equal, {
+      app: 1,
+      rootFolder: 14,
+      settings: 0,
+      showHidden: 2,
+      refreshKey: 3,
+      onUpdateSettings: 4
+    });
   }
 };
 var TreeView_default = TreeView;

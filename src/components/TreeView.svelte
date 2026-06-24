@@ -59,7 +59,6 @@
 
   let keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   let rootContextHandler: ((e: MouseEvent) => void) | null = null;
-  let viewContentEl: HTMLElement | null = null;
 
   $: rawChildren = sortWithOrder(
     [...rootFolder.children],
@@ -124,66 +123,31 @@
     clearFolderHighlight();
   }
 
-  function handleDocumentDragOver(e: DragEvent) {
+  function handleWindowDragOver(e: DragEvent) {
     if (!dragState.itemPath) return;
-    e.dataTransfer!.dropEffect = "move";
     const tree = document.querySelector(".simple-navigator-tree");
     if (!tree) return;
     const tr = tree.getBoundingClientRect();
     if (e.clientY < tr.top - DROP_ZONE_BUFFER || e.clientY > tr.bottom) return;
-    // Events within the tree bounds are handled by TreeNode's own handlers
-    if (e.clientY >= tr.top) return;
+    // Within tree — let TreeNode and the tree's own handlers deal with it
+    if (e.clientY >= tr.top && e.clientY <= tr.bottom) return;
+    // Above tree (buffer zone) — stop propagation so Obsidian's handlers
+    // on ancestor elements (workspace-tabs, etc.) never see this event
+    e.stopPropagation();
     e.preventDefault();
     handleRootDragOver(e);
   }
 
-  function handleDocumentDragEnter(e: DragEvent) {
+  function handleWindowDrop(e: DragEvent) {
     if (!dragState.itemPath) return;
-    e.dataTransfer!.dropEffect = "move";
-    e.preventDefault();
-  }
-
-  function handleDocumentDrop(e: DragEvent) {
-    if (!dragState.itemPath) return;
-    e.dataTransfer!.dropEffect = "move";
     const tree = document.querySelector(".simple-navigator-tree");
     if (!tree) return;
     if (tree.contains(e.target as Node)) return;
     const tr = tree.getBoundingClientRect();
     if (e.clientY < tr.top - DROP_ZONE_BUFFER || e.clientY > tr.bottom) return;
+    e.stopPropagation();
     e.preventDefault();
     handleRootDrop(e);
-  }
-
-  function isAboveTree(clientY: number): boolean {
-    const tree = document.querySelector(".simple-navigator-tree");
-    if (!tree) return false;
-    const tr = tree.getBoundingClientRect();
-    return clientY >= tr.top - DROP_ZONE_BUFFER && clientY < tr.top;
-  }
-
-  function handleViewContentDragEnter(e: DragEvent) {
-    if (!dragState.itemPath) return;
-    if (!isAboveTree(e.clientY)) return;
-    e.dataTransfer!.dropEffect = "move";
-    e.preventDefault();
-  }
-
-  function handleViewContentDragOver(e: DragEvent) {
-    if (!dragState.itemPath) return;
-    if (!isAboveTree(e.clientY)) return;
-    e.dataTransfer!.dropEffect = "move";
-    e.preventDefault();
-    handleRootDragOver(e);
-  }
-
-  function handleViewContentDrop(e: DragEvent) {
-    if (!dragState.itemPath) return;
-    if (isAboveTree(e.clientY)) {
-      e.dataTransfer!.dropEffect = "move";
-      e.preventDefault();
-      handleRootDrop(e);
-    }
   }
 
   async function handleSortEnd(detail: {
@@ -458,37 +422,21 @@
       handleRootContextMenu(e);
     };
     document.addEventListener("contextmenu", rootContextHandler);
-    document.addEventListener("dragover", handleDocumentDragOver, true);
-    document.addEventListener("dragenter", handleDocumentDragEnter, true);
-    document.addEventListener("drop", handleDocumentDrop, true);
-
-    // Also add handlers directly on .view-content to catch events at the target phase
-    const treeEl = document.querySelector(".simple-navigator-tree");
-    viewContentEl = treeEl?.closest(".view-content") as HTMLElement | null;
-    if (viewContentEl) {
-      viewContentEl.addEventListener("dragover", handleViewContentDragOver);
-      viewContentEl.addEventListener("dragenter", handleViewContentDragEnter);
-      viewContentEl.addEventListener("drop", handleViewContentDrop);
-    }
+    window.addEventListener("dragover", handleWindowDragOver, true);
+    window.addEventListener("drop", handleWindowDrop, true);
   });
 
   onDestroy(() => {
     if (activeLeafRef) {
       app.workspace.offref(activeLeafRef);
     }
-    document.removeEventListener("dragover", handleDocumentDragOver, true);
-    document.removeEventListener("dragenter", handleDocumentDragEnter, true);
-    document.removeEventListener("drop", handleDocumentDrop, true);
+    window.removeEventListener("dragover", handleWindowDragOver, true);
+    window.removeEventListener("drop", handleWindowDrop, true);
     if (keydownHandler) {
       document.removeEventListener("keydown", keydownHandler);
     }
     if (rootContextHandler) {
       document.removeEventListener("contextmenu", rootContextHandler);
-    }
-    if (viewContentEl) {
-      viewContentEl.removeEventListener("dragover", handleViewContentDragOver);
-      viewContentEl.removeEventListener("dragenter", handleViewContentDragEnter);
-      viewContentEl.removeEventListener("drop", handleViewContentDrop);
     }
   });
 </script>

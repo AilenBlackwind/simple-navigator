@@ -1,9 +1,12 @@
+.workspace-leaf-content[data-type="simple-navigator-view"] > .view-content {
+  padding: 0 !important;
+}
+
 .simple-navigator-tree {
   height: 100%;
   overflow-y: auto;
   padding: 0 0 4px 0;
   user-select: none;
-  margin-top: 0;
 }
 
 .simple-navigator-tree .nav-folder-title,
