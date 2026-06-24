@@ -4411,6 +4411,7 @@ function instance($$self, $$props, $$invalidate) {
     menu.showAtMouseEvent(event);
   }
   function handleDragStart(e) {
+    document.body.classList.add("sn-is-dragging");
     const title = e.currentTarget;
     const container = title.closest("[data-folder-path]");
     const itemEl = title.closest(".nav-folder, .nav-file");
@@ -4500,6 +4501,7 @@ function instance($$self, $$props, $$invalidate) {
   }
   function handleDragEnd(e) {
     destroyDropIndicator();
+    document.body.classList.remove("sn-is-dragging");
   }
   function span_binding($$value) {
     binding_callbacks[$$value ? "unshift" : "push"](() => {

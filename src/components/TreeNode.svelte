@@ -586,6 +586,7 @@
   }
 
   function handleDragStart(e: DragEvent) {
+    document.body.classList.add("sn-is-dragging");
     const title = e.currentTarget as HTMLElement;
     const container = title.closest("[data-folder-path]") as HTMLElement | null;
     const itemEl = title.closest(".nav-folder, .nav-file") as HTMLElement | null;
@@ -671,6 +672,7 @@
 
   function handleDragEnd(e: DragEvent) {
     destroyDropIndicator();
+    document.body.classList.remove("sn-is-dragging");
   }
 </script>
 

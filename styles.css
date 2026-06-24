@@ -1,3 +1,12 @@
+body.sn-is-dragging .workspace-tab-header-container,
+body.sn-is-dragging .workspace-tab-header-container-inner,
+body.sn-is-dragging .workspace-tab-header-spacer,
+body.sn-is-dragging .titlebar,
+body.sn-is-dragging .workspace-header {
+  -webkit-app-region: no-drag !important;
+  pointer-events: none !important;
+}
+
 .workspace-leaf-content[data-type="simple-navigator-view"] > .view-content {
   padding: 0 !important;
 }
