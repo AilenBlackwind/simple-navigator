@@ -53,6 +53,7 @@ export class SimpleNavigatorView extends ItemView {
           await this.plugin.saveSettings();
           this.component?.$set({ settings: this.plugin.settings });
         },
+        registerDomEvent: this.plugin.registerDomEvent.bind(this.plugin) as any,
       },
     });
 

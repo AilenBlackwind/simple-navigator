@@ -13,6 +13,12 @@
   export let showHidden: boolean = false;
   export let refreshKey: number = 0;
   export let onUpdateSettings: (s: PluginSettings) => Promise<void>;
+  export let registerDomEvent: (
+    el: HTMLElement | Window | Document,
+    event: string,
+    callback: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions
+  ) => void;
 
   let activeFilePath = "";
   let activeLeafRef: EventRef;
@@ -439,16 +445,16 @@
         })();
       }
     };
-    document.addEventListener("keydown", keydownHandler);
+    registerDomEvent(document, "keydown", keydownHandler);
     rootContextHandler = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       if (!target.closest(".simple-navigator-tree")) return;
       if (target.closest(".nav-folder-title, .nav-file-title")) return;
       handleRootContextMenu(e);
     };
-    document.addEventListener("contextmenu", rootContextHandler);
-    window.addEventListener("dragover", handleWindowDragOver, true);
-    window.addEventListener("drop", handleWindowDrop, true);
+    registerDomEvent(document, "contextmenu", rootContextHandler);
+    registerDomEvent(window, "dragover", handleWindowDragOver, true);
+    registerDomEvent(window, "drop", handleWindowDrop, true);
   });
 
   onDestroy(() => {

@@ -5036,7 +5036,7 @@ var TreeNode_default = TreeNode;
 // src/components/TreeView.svelte
 function get_each_context2(ctx, list, i) {
   const child_ctx = ctx.slice();
-  child_ctx[25] = list[i];
+  child_ctx[26] = list[i];
   return child_ctx;
 }
 function create_each_block2(key_1, ctx) {
@@ -5051,7 +5051,7 @@ function create_each_block2(key_1, ctx) {
       ),
       file: (
         /*child*/
-        ctx[25]
+        ctx[26]
       ),
       depth: 0,
       activeFilePath: (
@@ -5115,7 +5115,7 @@ function create_each_block2(key_1, ctx) {
       if (dirty & /*children*/
       128)
         treenode_changes.file = /*child*/
-        ctx[25];
+        ctx[26];
       if (dirty & /*activeFilePath*/
       32)
         treenode_changes.activeFilePath = /*activeFilePath*/
@@ -5174,7 +5174,7 @@ function create_fragment2(ctx) {
   );
   const get_key = (ctx2) => (
     /*child*/
-    ctx2[25].path
+    ctx2[26].path
   );
   for (let i = 0; i < each_value.length; i += 1) {
     let child_ctx = get_each_context2(ctx, each_value, i);
@@ -5275,6 +5275,7 @@ function instance2($$self, $$props, $$invalidate) {
   let { showHidden = false } = $$props;
   let { refreshKey = 0 } = $$props;
   let { onUpdateSettings } = $$props;
+  let { registerDomEvent } = $$props;
   let activeFilePath = "";
   let activeLeafRef;
   let selectedPaths = /* @__PURE__ */ new Set();
@@ -5660,7 +5661,7 @@ function instance2($$self, $$props, $$invalidate) {
         }))();
       }
     };
-    document.addEventListener("keydown", keydownHandler);
+    registerDomEvent(document, "keydown", keydownHandler);
     rootContextHandler = (e) => {
       const target = e.target;
       if (!target.closest(".simple-navigator-tree"))
@@ -5669,9 +5670,9 @@ function instance2($$self, $$props, $$invalidate) {
         return;
       handleRootContextMenu(e);
     };
-    document.addEventListener("contextmenu", rootContextHandler);
-    window.addEventListener("dragover", handleWindowDragOver, true);
-    window.addEventListener("drop", handleWindowDrop, true);
+    registerDomEvent(document, "contextmenu", rootContextHandler);
+    registerDomEvent(window, "dragover", handleWindowDragOver, true);
+    registerDomEvent(window, "drop", handleWindowDrop, true);
   });
   onDestroy(() => {
     if (activeLeafRef) {
@@ -5699,20 +5700,22 @@ function instance2($$self, $$props, $$invalidate) {
       $$invalidate(3, refreshKey = $$props2.refreshKey);
     if ("onUpdateSettings" in $$props2)
       $$invalidate(4, onUpdateSettings = $$props2.onUpdateSettings);
+    if ("registerDomEvent" in $$props2)
+      $$invalidate(15, registerDomEvent = $$props2.registerDomEvent);
   };
   $$self.$$.update = () => {
     if ($$self.$$.dirty & /*rootFolder, settings, refreshKey*/
     16393) {
       $:
-        $$invalidate(16, rawChildren = sortWithOrder([...rootFolder.children], settings.orderMap, "", refreshKey));
+        $$invalidate(17, rawChildren = sortWithOrder([...rootFolder.children], settings.orderMap, "", refreshKey));
     }
     if ($$self.$$.dirty & /*settings*/
     1) {
       $:
-        $$invalidate(15, hiddenSet = new Set(settings.hiddenPaths));
+        $$invalidate(16, hiddenSet = new Set(settings.hiddenPaths));
     }
     if ($$self.$$.dirty & /*showHidden, rawChildren, hiddenSet*/
-    98308) {
+    196612) {
       $:
         $$invalidate(7, children2 = showHidden ? rawChildren : rawChildren.filter((c) => !hiddenSet.has(c.path)));
     }
@@ -5733,6 +5736,7 @@ function instance2($$self, $$props, $$invalidate) {
     handleRootDragLeave,
     handleSortEnd,
     rootFolder,
+    registerDomEvent,
     hiddenSet,
     rawChildren
   ];
@@ -5746,7 +5750,8 @@ var TreeView = class extends SvelteComponent {
       settings: 0,
       showHidden: 2,
       refreshKey: 3,
-      onUpdateSettings: 4
+      onUpdateSettings: 4,
+      registerDomEvent: 15
     });
   }
 };
@@ -5795,7 +5800,8 @@ var SimpleNavigatorView = class extends import_obsidian5.ItemView {
           this.plugin.settings = s;
           await this.plugin.saveSettings();
           (_a = this.component) == null ? void 0 : _a.$set({ settings: this.plugin.settings });
-        }
+        },
+        registerDomEvent: this.plugin.registerDomEvent.bind(this.plugin)
       }
     });
     let bumpRaf = null;
