@@ -922,27 +922,38 @@ var customSvgContent = /* @__PURE__ */ new Map();
 function isCustomIcon(value) {
   return value.startsWith(CUSTOM_ICON_PREFIX);
 }
-function setCustomIcon(el, value, app) {
-  el.innerHTML = "";
-  if (isCustomIcon(value)) {
-    const svg = customSvgContent.get(value);
-    if (svg) {
-      el.innerHTML = svg;
-      const svgEl2 = el.querySelector("svg");
-      if (svgEl2) {
-        svgEl2.style.width = "16px";
-        svgEl2.style.height = "16px";
-      }
-      return;
-    }
+async function deleteFile(app, file) {
+  const trashOption = app.vault.getConfig("trashOption");
+  if (trashOption === "permanent") {
+    await app.vault.delete(file);
+  } else {
+    await app.vault.trash(file, trashOption === "system");
   }
-  el.style.display = "";
-  (0, import_obsidian.setIcon)(el, value);
-  const svgEl = el.querySelector("svg");
-  if (svgEl) {
-    svgEl.style.width = "16px";
-    svgEl.style.height = "16px";
-    svgEl.style.strokeWidth = "2px";
+}
+function setCustomIcon(el, value, app) {
+  try {
+    el.innerHTML = "";
+    if (isCustomIcon(value)) {
+      const svg = customSvgContent.get(value);
+      if (svg) {
+        el.innerHTML = svg;
+        const svgEl2 = el.querySelector("svg");
+        if (svgEl2) {
+          svgEl2.style.width = "16px";
+          svgEl2.style.height = "16px";
+        }
+        return;
+      }
+    }
+    el.style.display = "";
+    (0, import_obsidian.setIcon)(el, value);
+    const svgEl = el.querySelector("svg");
+    if (svgEl) {
+      svgEl.style.width = "16px";
+      svgEl.style.height = "16px";
+      svgEl.style.strokeWidth = "2px";
+    }
+  } catch (e) {
   }
 }
 
@@ -953,7 +964,8 @@ var dragState = {
   oldIndex: -1,
   targetFolder: null,
   toPath: "",
-  newIndex: -1
+  newIndex: -1,
+  lastDropTime: 0
 };
 var dropIndicatorEl = null;
 var _lastHighlightAt = 0;
@@ -1121,7 +1133,7 @@ function resolveDropTarget(x, y) {
   }
   let container = matching[matching.length - 1].container;
   let rect = matching[matching.length - 1].rect;
-  const EDGE = 28;
+  const EDGE = 48;
   if (matching.length > 1) {
     const nearBottom = y > rect.bottom - EDGE;
     if (nearBottom) {
@@ -1156,7 +1168,7 @@ function resolveDropTarget(x, y) {
       if (child.classList.contains("nav-folder")) {
         const childrenContainer = child.querySelector(".nav-folder-children");
         if (childrenContainer && childrenContainer.offsetHeight === 0) {
-          const edgeSize = cr.height * 0.15;
+          const edgeSize = cr.height * 0.25;
           if (y <= cr.top + edgeSize) {
             return { itemEl: child, containerPath, newIndex: computeNewIndex(child, y), targetFolder: null };
           }
@@ -1193,7 +1205,7 @@ function resolveDropTarget(x, y) {
         }
         return { itemEl: child, containerPath, newIndex: -1, targetFolder: child.dataset.path || null };
       }
-      const fileEdge = cr.height * 0.15;
+      const fileEdge = cr.height * 0.25;
       if (y <= cr.top + fileEdge) {
         return { itemEl: child, containerPath, newIndex: i, targetFolder: null };
       }
@@ -2749,15 +2761,21 @@ async function refreshCustomIcons(app, folderPath) {
     const exists = await adapter.exists(folderPath);
     if (!exists)
       return;
-    const entries = await adapter.list(folderPath);
-    for (const filePath of entries.files) {
-      if (filePath.toLowerCase().endsWith(".svg")) {
-        const svg = await adapter.read(filePath);
-        const key = `${CUSTOM_ICON_PREFIX}${filePath}`;
-        cachedCustomItems.push(key);
-        customSvgContent.set(key, svg);
+    const walk = async (dir) => {
+      const entries = await adapter.list(dir);
+      for (const filePath of entries.files) {
+        if (filePath.toLowerCase().endsWith(".svg")) {
+          const svg = await adapter.read(filePath);
+          const key = `${CUSTOM_ICON_PREFIX}${filePath}`;
+          cachedCustomItems.push(key);
+          customSvgContent.set(key, svg);
+        }
       }
-    }
+      for (const sub of entries.folders) {
+        await walk(sub);
+      }
+    };
+    await walk(folderPath);
   } catch (e) {
   }
 }
@@ -2844,11 +2862,60 @@ var FolderSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
     this.onSelect(folder);
   }
 };
+function showConfirmModal(app, title, description, confirmText) {
+  return new Promise((resolve) => {
+    const modal = new ConfirmModal(app, title, description, confirmText || "Delete", resolve);
+    modal.open();
+  });
+}
+var ConfirmModal = class extends import_obsidian2.Modal {
+  constructor(app, titleText, desc, confirmText, resolve) {
+    super(app);
+    this.titleText = titleText;
+    this.desc = desc;
+    this.confirmText = confirmText;
+    this.resolve = resolve;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    const headerDiv = contentEl.createDiv({ cls: "modal-header" });
+    const iconEl = headerDiv.createSpan();
+    (0, import_obsidian2.setIcon)(iconEl, "trash-2");
+    iconEl.style.marginRight = "8px";
+    iconEl.style.color = "var(--color-red)";
+    headerDiv.createEl("h2", { text: this.titleText });
+    if (typeof this.desc === "string") {
+      contentEl.createEl("p", { text: this.desc });
+    } else {
+      contentEl.appendChild(this.desc);
+    }
+    const buttonDiv = contentEl.createDiv({ cls: "modal-button-container" });
+    buttonDiv.style.display = "flex";
+    buttonDiv.style.justifyContent = "flex-end";
+    buttonDiv.style.gap = "8px";
+    buttonDiv.style.marginTop = "24px";
+    const cancelBtn = buttonDiv.createEl("button", { text: "Cancel" });
+    cancelBtn.onclick = () => this.close();
+    const deleteBtn = buttonDiv.createEl("button", {
+      text: this.confirmText,
+      cls: "mod-warning"
+    });
+    deleteBtn.onclick = () => {
+      this.resolve(true);
+      this.close();
+    };
+  }
+  onClose() {
+    this.contentEl.empty();
+    this.resolve(false);
+  }
+};
 
 // src/components/TreeNode.svelte
 function get_each_context(ctx, list, i) {
   const child_ctx = ctx.slice();
-  child_ctx[59] = list[i];
+  child_ctx[62] = list[i];
   return child_ctx;
 }
 function create_else_block_1(ctx) {
@@ -2864,7 +2931,7 @@ function create_else_block_1(ctx) {
       /*file*/
       ctx[2].path
     ] || !/*settings*/
-    ctx[0].hideDefaultIcons) && create_if_block_5(ctx)
+    ctx[0].hideDefaultIcons) && create_if_block_6(ctx)
   );
   function select_block_type_2(ctx2, dirty) {
     if (
@@ -2872,10 +2939,10 @@ function create_else_block_1(ctx) {
       ctx2[15] === /*file*/
       ctx2[2].path
     )
-      return create_if_block_4;
+      return create_if_block_5;
     return create_else_block_2;
   }
-  let current_block_type = select_block_type_2(ctx, [-1, -1]);
+  let current_block_type = select_block_type_2(ctx, [-1, -1, -1]);
   let if_block1 = current_block_type(ctx);
   return {
     c() {
@@ -2947,31 +3014,37 @@ function create_else_block_1(ctx) {
             div0,
             "click",
             /*handleClick*/
+            ctx[27]
+          ),
+          listen(
+            div0,
+            "auxclick",
+            /*handleAuxClick*/
             ctx[26]
           ),
           listen(
             div0,
             "dblclick",
             /*handleDblClick*/
-            ctx[29]
+            ctx[30]
           ),
           listen(
             div0,
             "contextmenu",
             /*handleContextMenu*/
-            ctx[30]
+            ctx[31]
           ),
           listen(
             div0,
             "dragstart",
             /*handleDragStart*/
-            ctx[31]
+            ctx[32]
           ),
           listen(
             div0,
             "dragend",
             /*handleDragEnd*/
-            ctx[35]
+            ctx[36]
           )
         ];
         mounted = true;
@@ -2989,7 +3062,7 @@ function create_else_block_1(ctx) {
         if (if_block0) {
           if_block0.p(ctx2, dirty);
         } else {
-          if_block0 = create_if_block_5(ctx2);
+          if_block0 = create_if_block_6(ctx2);
           if_block0.c();
           if_block0.m(div0, t);
         }
@@ -3095,8 +3168,6 @@ function create_if_block(ctx) {
   let t1;
   let t2;
   let div1;
-  let each_blocks = [];
-  let each_1_lookup = /* @__PURE__ */ new Map();
   let div1_data_folder_path_value;
   let div2_data_path_value;
   let current;
@@ -3104,7 +3175,7 @@ function create_if_block(ctx) {
   let dispose;
   let if_block0 = (
     /*settings*/
-    ctx[0].enableCollapseIcons && create_if_block_3(ctx)
+    ctx[0].enableCollapseIcons && create_if_block_4(ctx)
   );
   let if_block1 = (
     /*settings*/
@@ -3112,7 +3183,7 @@ function create_if_block(ctx) {
       /*file*/
       ctx[2].path
     ] || !/*settings*/
-    ctx[0].hideDefaultIcons) && create_if_block_2(ctx)
+    ctx[0].hideDefaultIcons) && create_if_block_3(ctx)
   );
   function select_block_type_1(ctx2, dirty) {
     if (
@@ -3120,24 +3191,13 @@ function create_if_block(ctx) {
       ctx2[15] === /*file*/
       ctx2[2].path
     )
-      return create_if_block_1;
+      return create_if_block_2;
     return create_else_block;
   }
-  let current_block_type = select_block_type_1(ctx, [-1, -1]);
+  let current_block_type = select_block_type_1(ctx, [-1, -1, -1]);
   let if_block2 = current_block_type(ctx);
-  let each_value = ensure_array_like(
-    /*children*/
-    ctx[22]
-  );
-  const get_key = (ctx2) => (
-    /*child*/
-    ctx2[59].path
-  );
-  for (let i = 0; i < each_value.length; i += 1) {
-    let child_ctx = get_each_context(ctx, each_value, i);
-    let key = get_key(child_ctx);
-    each_1_lookup.set(key, each_blocks[i] = create_each_block(key, child_ctx));
-  }
+  let if_block3 = !/*collapsed*/
+  ctx[12] && create_if_block_1(ctx);
   return {
     c() {
       div2 = element("div");
@@ -3151,9 +3211,8 @@ function create_if_block(ctx) {
       if_block2.c();
       t2 = space();
       div1 = element("div");
-      for (let i = 0; i < each_blocks.length; i += 1) {
-        each_blocks[i].c();
-      }
+      if (if_block3)
+        if_block3.c();
       attr(div0, "class", "nav-folder-title");
       attr(div0, "draggable", "true");
       set_style(div0, "padding-left", 4 + /*depth*/
@@ -3181,6 +3240,24 @@ function create_if_block(ctx) {
       attr(div1, "class", "nav-folder-children");
       attr(div1, "data-folder-path", div1_data_folder_path_value = /*file*/
       ctx[2].path);
+      set_style(
+        div1,
+        "display",
+        /*collapsed*/
+        ctx[12] ? "none" : ""
+      );
+      set_style(
+        div1,
+        "visibility",
+        /*collapsed*/
+        ctx[12] ? "hidden" : ""
+      );
+      set_style(
+        div1,
+        "overflow",
+        /*collapsed*/
+        ctx[12] ? "hidden" : ""
+      );
       set_style(
         div1,
         "--sn-color",
@@ -3230,11 +3307,8 @@ function create_if_block(ctx) {
       if_block2.m(div0, null);
       append(div2, t2);
       append(div2, div1);
-      for (let i = 0; i < each_blocks.length; i += 1) {
-        if (each_blocks[i]) {
-          each_blocks[i].m(div1, null);
-        }
-      }
+      if (if_block3)
+        if_block3.m(div1, null);
       current = true;
       if (!mounted) {
         dispose = [
@@ -3242,47 +3316,47 @@ function create_if_block(ctx) {
             div0,
             "click",
             /*handleClick*/
-            ctx[26]
+            ctx[27]
           ),
           listen(
             div0,
             "dblclick",
             /*handleDblClick*/
-            ctx[29]
+            ctx[30]
           ),
           listen(
             div0,
             "contextmenu",
             /*handleContextMenu*/
-            ctx[30]
+            ctx[31]
           ),
           listen(
             div0,
             "dragstart",
             /*handleDragStart*/
-            ctx[31]
+            ctx[32]
           ),
           listen(
             div0,
             "dragend",
             /*handleDragEnd*/
-            ctx[35]
+            ctx[36]
           ),
           listen(div1, "dragover", prevent_default(
             /*handleDragOver*/
-            ctx[32]
+            ctx[33]
           )),
           listen(
             div1,
             "drop",
             /*handleDrop*/
-            ctx[33]
+            ctx[34]
           ),
           listen(
             div1,
             "dragleave",
             /*handleDragLeave*/
-            ctx[34]
+            ctx[35]
           )
         ];
         mounted = true;
@@ -3296,7 +3370,7 @@ function create_if_block(ctx) {
         if (if_block0) {
           if_block0.p(ctx2, dirty);
         } else {
-          if_block0 = create_if_block_3(ctx2);
+          if_block0 = create_if_block_4(ctx2);
           if_block0.c();
           if_block0.m(div0, t0);
         }
@@ -3315,7 +3389,7 @@ function create_if_block(ctx) {
         if (if_block1) {
           if_block1.p(ctx2, dirty);
         } else {
-          if_block1 = create_if_block_2(ctx2);
+          if_block1 = create_if_block_3(ctx2);
           if_block1.c();
           if_block1.m(div0, t1);
         }
@@ -3364,20 +3438,58 @@ function create_if_block(ctx) {
           ] || void 0
         );
       }
-      if (dirty[0] & /*app, children, depth, activeFilePath, settings, showHidden, refreshKey, selectedPaths, onSelect, onClearSelection, onSortEnd, onUpdateSettings*/
-      4198395) {
-        each_value = ensure_array_like(
-          /*children*/
-          ctx2[22]
-        );
+      if (!/*collapsed*/
+      ctx2[12]) {
+        if (if_block3) {
+          if_block3.p(ctx2, dirty);
+          if (dirty[0] & /*collapsed*/
+          4096) {
+            transition_in(if_block3, 1);
+          }
+        } else {
+          if_block3 = create_if_block_1(ctx2);
+          if_block3.c();
+          transition_in(if_block3, 1);
+          if_block3.m(div1, null);
+        }
+      } else if (if_block3) {
         group_outros();
-        each_blocks = update_keyed_each(each_blocks, dirty, get_key, 1, ctx2, each_value, each_1_lookup, div1, outro_and_destroy_block, create_each_block, null, get_each_context);
+        transition_out(if_block3, 1, 1, () => {
+          if_block3 = null;
+        });
         check_outros();
       }
       if (!current || dirty[0] & /*file*/
       4 && div1_data_folder_path_value !== (div1_data_folder_path_value = /*file*/
       ctx2[2].path)) {
         attr(div1, "data-folder-path", div1_data_folder_path_value);
+      }
+      if (dirty[0] & /*collapsed*/
+      4096) {
+        set_style(
+          div1,
+          "display",
+          /*collapsed*/
+          ctx2[12] ? "none" : ""
+        );
+      }
+      if (dirty[0] & /*collapsed*/
+      4096) {
+        set_style(
+          div1,
+          "visibility",
+          /*collapsed*/
+          ctx2[12] ? "hidden" : ""
+        );
+      }
+      if (dirty[0] & /*collapsed*/
+      4096) {
+        set_style(
+          div1,
+          "overflow",
+          /*collapsed*/
+          ctx2[12] ? "hidden" : ""
+        );
       }
       if (dirty[0] & /*settings, file*/
       5) {
@@ -3435,15 +3547,11 @@ function create_if_block(ctx) {
     i(local) {
       if (current)
         return;
-      for (let i = 0; i < each_value.length; i += 1) {
-        transition_in(each_blocks[i]);
-      }
+      transition_in(if_block3);
       current = true;
     },
     o(local) {
-      for (let i = 0; i < each_blocks.length; i += 1) {
-        transition_out(each_blocks[i]);
-      }
+      transition_out(if_block3);
       current = false;
     },
     d(detaching) {
@@ -3455,15 +3563,14 @@ function create_if_block(ctx) {
       if (if_block1)
         if_block1.d();
       if_block2.d();
-      for (let i = 0; i < each_blocks.length; i += 1) {
-        each_blocks[i].d();
-      }
+      if (if_block3)
+        if_block3.d();
       mounted = false;
       run_all(dispose);
     }
   };
 }
-function create_if_block_5(ctx) {
+function create_if_block_6(ctx) {
   let span;
   return {
     c() {
@@ -3486,7 +3593,7 @@ function create_if_block_5(ctx) {
     },
     m(target, anchor) {
       insert(target, span, anchor);
-      ctx[49](span);
+      ctx[52](span);
     },
     p(ctx2, dirty) {
       if (dirty[0] & /*iconColor*/
@@ -3503,7 +3610,7 @@ function create_if_block_5(ctx) {
       if (detaching) {
         detach(span);
       }
-      ctx[49](null);
+      ctx[52](null);
     }
   };
 }
@@ -3539,7 +3646,7 @@ function create_else_block_2(ctx) {
     }
   };
 }
-function create_if_block_4(ctx) {
+function create_if_block_5(ctx) {
   let input;
   let mounted;
   let dispose;
@@ -3553,20 +3660,20 @@ function create_if_block_4(ctx) {
     },
     m(target, anchor) {
       insert(target, input, anchor);
-      ctx[50](input);
+      ctx[53](input);
       if (!mounted) {
         dispose = [
           listen(
             input,
             "blur",
             /*saveRename*/
-            ctx[27]
+            ctx[28]
           ),
           listen(
             input,
             "keydown",
             /*handleRenameKeydown*/
-            ctx[28]
+            ctx[29]
           )
         ];
         mounted = true;
@@ -3584,13 +3691,13 @@ function create_if_block_4(ctx) {
       if (detaching) {
         detach(input);
       }
-      ctx[50](null);
+      ctx[53](null);
       mounted = false;
       run_all(dispose);
     }
   };
 }
-function create_if_block_3(ctx) {
+function create_if_block_4(ctx) {
   let span;
   return {
     c() {
@@ -3607,18 +3714,18 @@ function create_if_block_3(ctx) {
     },
     m(target, anchor) {
       insert(target, span, anchor);
-      ctx[46](span);
+      ctx[49](span);
     },
     p: noop,
     d(detaching) {
       if (detaching) {
         detach(span);
       }
-      ctx[46](null);
+      ctx[49](null);
     }
   };
 }
-function create_if_block_2(ctx) {
+function create_if_block_3(ctx) {
   let span;
   return {
     c() {
@@ -3641,7 +3748,7 @@ function create_if_block_2(ctx) {
     },
     m(target, anchor) {
       insert(target, span, anchor);
-      ctx[47](span);
+      ctx[50](span);
     },
     p(ctx2, dirty) {
       if (dirty[0] & /*iconColor*/
@@ -3658,7 +3765,7 @@ function create_if_block_2(ctx) {
       if (detaching) {
         detach(span);
       }
-      ctx[47](null);
+      ctx[50](null);
     }
   };
 }
@@ -3702,7 +3809,7 @@ function create_else_block(ctx) {
     }
   };
 }
-function create_if_block_1(ctx) {
+function create_if_block_2(ctx) {
   let input;
   let mounted;
   let dispose;
@@ -3716,20 +3823,20 @@ function create_if_block_1(ctx) {
     },
     m(target, anchor) {
       insert(target, input, anchor);
-      ctx[48](input);
+      ctx[51](input);
       if (!mounted) {
         dispose = [
           listen(
             input,
             "blur",
             /*saveRename*/
-            ctx[27]
+            ctx[28]
           ),
           listen(
             input,
             "keydown",
             /*handleRenameKeydown*/
-            ctx[28]
+            ctx[29]
           )
         ];
         mounted = true;
@@ -3747,9 +3854,79 @@ function create_if_block_1(ctx) {
       if (detaching) {
         detach(input);
       }
-      ctx[48](null);
+      ctx[51](null);
       mounted = false;
       run_all(dispose);
+    }
+  };
+}
+function create_if_block_1(ctx) {
+  let each_blocks = [];
+  let each_1_lookup = /* @__PURE__ */ new Map();
+  let each_1_anchor;
+  let current;
+  let each_value = ensure_array_like(
+    /*children*/
+    ctx[22]
+  );
+  const get_key = (ctx2) => (
+    /*child*/
+    ctx2[62].path
+  );
+  for (let i = 0; i < each_value.length; i += 1) {
+    let child_ctx = get_each_context(ctx, each_value, i);
+    let key = get_key(child_ctx);
+    each_1_lookup.set(key, each_blocks[i] = create_each_block(key, child_ctx));
+  }
+  return {
+    c() {
+      for (let i = 0; i < each_blocks.length; i += 1) {
+        each_blocks[i].c();
+      }
+      each_1_anchor = empty();
+    },
+    m(target, anchor) {
+      for (let i = 0; i < each_blocks.length; i += 1) {
+        if (each_blocks[i]) {
+          each_blocks[i].m(target, anchor);
+        }
+      }
+      insert(target, each_1_anchor, anchor);
+      current = true;
+    },
+    p(ctx2, dirty) {
+      if (dirty[0] & /*app, children, depth, activeFilePath, settings, showHidden, refreshKey, selectedPaths, onSelect, onClearSelection, onSortEnd, onUpdateSettings*/
+      4198395) {
+        each_value = ensure_array_like(
+          /*children*/
+          ctx2[22]
+        );
+        group_outros();
+        each_blocks = update_keyed_each(each_blocks, dirty, get_key, 1, ctx2, each_value, each_1_lookup, each_1_anchor.parentNode, outro_and_destroy_block, create_each_block, each_1_anchor, get_each_context);
+        check_outros();
+      }
+    },
+    i(local) {
+      if (current)
+        return;
+      for (let i = 0; i < each_value.length; i += 1) {
+        transition_in(each_blocks[i]);
+      }
+      current = true;
+    },
+    o(local) {
+      for (let i = 0; i < each_blocks.length; i += 1) {
+        transition_out(each_blocks[i]);
+      }
+      current = false;
+    },
+    d(detaching) {
+      if (detaching) {
+        detach(each_1_anchor);
+      }
+      for (let i = 0; i < each_blocks.length; i += 1) {
+        each_blocks[i].d(detaching);
+      }
     }
   };
 }
@@ -3765,7 +3942,7 @@ function create_each_block(key_1, ctx) {
       ),
       file: (
         /*child*/
-        ctx[59]
+        ctx[62]
       ),
       depth: (
         /*depth*/
@@ -3832,7 +4009,7 @@ function create_each_block(key_1, ctx) {
       if (dirty[0] & /*children*/
       4194304)
         treenode_changes.file = /*child*/
-        ctx[59];
+        ctx[62];
       if (dirty[0] & /*depth*/
       8)
         treenode_changes.depth = /*depth*/
@@ -3908,7 +4085,7 @@ function create_fragment(ctx) {
       return 0;
     return 1;
   }
-  current_block_type_index = select_block_type(ctx, [-1, -1]);
+  current_block_type_index = select_block_type(ctx, [-1, -1, -1]);
   if_block = if_blocks[current_block_type_index] = if_block_creators[current_block_type_index](ctx);
   return {
     c() {
@@ -3975,6 +4152,8 @@ function instance($$self, $$props, $$invalidate) {
   let iconId;
   let collapseIconId;
   let collapseIconExpandedId;
+  let curColIcon;
+  let curColColor;
   let isActive;
   let iconColor;
   let isMultiSelected;
@@ -3999,7 +4178,18 @@ function instance($$self, $$props, $$invalidate) {
   let typeIconEl;
   let editingPath = null;
   let renameInputEl = null;
+  function handleAuxClick(e) {
+    if (e.button !== 1)
+      return;
+    e.preventDefault();
+    if (file instanceof import_obsidian3.TFile) {
+      onClearSelection();
+      app.workspace.getLeaf("tab").openFile(file);
+    }
+  }
   function handleClick(e) {
+    if (Date.now() - dragState.lastDropTime < 300)
+      return;
     if (editingPath === file.path)
       return;
     if (e.shiftKey || e.ctrlKey) {
@@ -4184,10 +4374,17 @@ function instance($$self, $$props, $$invalidate) {
       menu.addSeparator();
       menu.addItem((item) => item.setTitle("Rename").setIcon("pencil").onClick(handleRename));
       menu.addItem((item) => item.setTitle("Delete").setIcon("trash-2").setWarning(true).onClick(() => __awaiter(this, void 0, void 0, function* () {
+        if (settings.confirmDelete) {
+          const title = "Delete";
+          const desc = targetPaths.length > 1 ? `Are you sure you want to delete these ${targetPaths.length} items?` : `Are you sure you want to delete "${file.name}"?`;
+          const confirmed = yield showConfirmModal(app, title, desc);
+          if (!confirmed)
+            return;
+        }
         for (const p of targetPaths) {
           const f = app.vault.getAbstractFileByPath(p);
           if (f)
-            yield app.vault.delete(f, true);
+            yield deleteFile(app, f);
         }
       })));
       menu.addSeparator();
@@ -4200,10 +4397,17 @@ function instance($$self, $$props, $$invalidate) {
       menu.addSeparator();
       menu.addItem((item) => item.setTitle("Rename").setIcon("pencil").onClick(handleRename));
       menu.addItem((item) => item.setTitle("Delete").setIcon("trash-2").setWarning(true).onClick(() => __awaiter(this, void 0, void 0, function* () {
+        if (settings.confirmDelete) {
+          const title = "Delete";
+          const desc = targetPaths.length > 1 ? `Are you sure you want to delete these ${targetPaths.length} items?` : `Are you sure you want to delete "${file.name}"?`;
+          const confirmed = yield showConfirmModal(app, title, desc);
+          if (!confirmed)
+            return;
+        }
         for (const p of targetPaths) {
           const f = app.vault.getAbstractFileByPath(p);
           if (f)
-            yield app.vault.delete(f, true);
+            yield deleteFile(app, f);
         }
       })));
       menu.addSeparator();
@@ -4469,8 +4673,11 @@ function instance($$self, $$props, $$invalidate) {
     }
   }
   function handleDrop(e) {
+    dragState.lastDropTime = Date.now();
     e.stopPropagation();
     destroyDropIndicator();
+    if (!dragState.itemPath)
+      return;
     const fromPath = dragState.fromPath;
     const itemPath = dragState.itemPath;
     const oldIndex = dragState.oldIndex;
@@ -4491,6 +4698,8 @@ function instance($$self, $$props, $$invalidate) {
         itemPath
       });
     }
+    dragState.itemPath = "";
+    dragState.fromPath = "";
   }
   function handleDragLeave(e) {
     const target = e.currentTarget;
@@ -4506,13 +4715,13 @@ function instance($$self, $$props, $$invalidate) {
   function span_binding($$value) {
     binding_callbacks[$$value ? "unshift" : "push"](() => {
       collapseIconEl = $$value;
-      $$invalidate(13, collapseIconEl), $$invalidate(12, collapsed), $$invalidate(40, collapseIconId), $$invalidate(39, collapseIconExpandedId), $$invalidate(1, app), $$invalidate(0, settings), $$invalidate(2, file), $$invalidate(36, _a), $$invalidate(37, _b);
+      $$invalidate(13, collapseIconEl), $$invalidate(12, collapsed), $$invalidate(41, curColIcon), $$invalidate(40, curColColor), $$invalidate(1, app), $$invalidate(0, settings), $$invalidate(2, file), $$invalidate(43, collapseIconId), $$invalidate(42, collapseIconExpandedId), $$invalidate(37, _a), $$invalidate(38, _b);
     });
   }
   function span_binding_1($$value) {
     binding_callbacks[$$value ? "unshift" : "push"](() => {
       typeIconEl = $$value;
-      $$invalidate(14, typeIconEl);
+      $$invalidate(14, typeIconEl), $$invalidate(44, iconId), $$invalidate(1, app), $$invalidate(0, settings), $$invalidate(2, file), $$invalidate(18, isArchived), $$invalidate(17, isFolder), $$invalidate(45, extHidden), $$invalidate(48, visibleExtSet);
     });
   }
   function input_binding($$value) {
@@ -4524,7 +4733,7 @@ function instance($$self, $$props, $$invalidate) {
   function span_binding_2($$value) {
     binding_callbacks[$$value ? "unshift" : "push"](() => {
       typeIconEl = $$value;
-      $$invalidate(14, typeIconEl);
+      $$invalidate(14, typeIconEl), $$invalidate(44, iconId), $$invalidate(1, app), $$invalidate(0, settings), $$invalidate(2, file), $$invalidate(18, isArchived), $$invalidate(17, isFolder), $$invalidate(45, extHidden), $$invalidate(48, visibleExtSet);
     });
   }
   function input_binding_1($$value) {
@@ -4560,6 +4769,11 @@ function instance($$self, $$props, $$invalidate) {
       $$invalidate(11, onUpdateSettings = $$props2.onUpdateSettings);
   };
   $$self.$$.update = () => {
+    if ($$self.$$.dirty[0] & /*settings, file*/
+    5) {
+      $:
+        $$invalidate(12, collapsed = settings.collapsedPaths.includes(file.path));
+    }
     if ($$self.$$.dirty[0] & /*file*/
     4) {
       $:
@@ -4586,31 +4800,31 @@ function instance($$self, $$props, $$invalidate) {
     if ($$self.$$.dirty[0] & /*settings*/
     1) {
       $:
-        $$invalidate(43, hiddenSet = new Set(settings.hiddenPaths));
+        $$invalidate(46, hiddenSet = new Set(settings.hiddenPaths));
     }
     if ($$self.$$.dirty[0] & /*file*/
     4 | $$self.$$.dirty[1] & /*hiddenSet*/
-    4096) {
+    32768) {
       $:
         $$invalidate(25, isHidden = hiddenSet.has(file.path));
     }
     if ($$self.$$.dirty[0] & /*settings*/
     1) {
       $:
-        $$invalidate(45, visibleExtSet = getVisibleExtSet(settings.visibleExtensions));
+        $$invalidate(48, visibleExtSet = getVisibleExtSet(settings.visibleExtensions));
     }
     if ($$self.$$.dirty[0] & /*isFolder, file*/
     131076 | $$self.$$.dirty[1] & /*visibleExtSet*/
-    16384) {
+    131072) {
       $:
-        $$invalidate(42, extHidden = !isFolder && visibleExtSet !== null && !visibleExtSet.has((() => {
+        $$invalidate(45, extHidden = !isFolder && visibleExtSet !== null && !visibleExtSet.has((() => {
           const dotIdx = file.name.lastIndexOf(".");
           return dotIdx >= 0 ? file.name.slice(dotIdx + 1).toLowerCase() : "";
         })()));
     }
     if ($$self.$$.dirty[0] & /*file*/
     4 | $$self.$$.dirty[1] & /*extHidden*/
-    2048) {
+    16384) {
       $:
         $$invalidate(24, displayName = extHidden ? file.name.slice(0, file.name.lastIndexOf(".")) : file.name);
     }
@@ -4622,11 +4836,11 @@ function instance($$self, $$props, $$invalidate) {
     if ($$self.$$.dirty[0] & /*isFolder, isArchived, file, settings, refreshKey*/
     393285) {
       $:
-        $$invalidate(44, rawChildren = isFolder ? isArchived ? [...file.children].sort(defaultSortFn) : sortWithOrder([...file.children], settings.orderMap, file.path, refreshKey) : []);
+        $$invalidate(47, rawChildren = isFolder ? isArchived ? [...file.children].sort(defaultSortFn) : sortWithOrder([...file.children], settings.orderMap, file.path, refreshKey) : []);
     }
     if ($$self.$$.dirty[0] & /*showHidden*/
     32 | $$self.$$.dirty[1] & /*rawChildren, hiddenSet*/
-    12288) {
+    98304) {
       $:
         $$invalidate(22, children2 = showHidden ? rawChildren : rawChildren.filter((c) => !hiddenSet.has(c.path)));
     }
@@ -4637,43 +4851,56 @@ function instance($$self, $$props, $$invalidate) {
     }
     if ($$self.$$.dirty[0] & /*settings, file, isArchived, isFolder*/
     393221 | $$self.$$.dirty[1] & /*extHidden*/
-    2048) {
+    16384) {
       $:
-        $$invalidate(41, iconId = settings.iconMap[file.path] || (isArchived ? "archive" : isFolder ? "folder" : extHidden ? "file-text" : getFileIcon(file.name)));
+        $$invalidate(44, iconId = settings.iconMap[file.path] || (isArchived ? "archive" : isFolder ? "folder" : extHidden ? "file-text" : getFileIcon(file.name)));
     }
     if ($$self.$$.dirty[0] & /*typeIconEl, app*/
     16386 | $$self.$$.dirty[1] & /*iconId*/
-    1024) {
+    8192) {
       $:
-        if (typeIconEl) {
+        if (typeIconEl && typeIconEl.dataset.snIcon !== iconId) {
+          $$invalidate(14, typeIconEl.dataset.snIcon = iconId, typeIconEl);
           setCustomIcon(typeIconEl, iconId, app);
         }
     }
     if ($$self.$$.dirty[0] & /*settings, file*/
     5 | $$self.$$.dirty[1] & /*_a*/
-    32) {
+    64) {
       $:
-        $$invalidate(40, collapseIconId = ($$invalidate(36, _a = settings.folderCollapseIconMap[file.path]) === null || _a === void 0 ? void 0 : _a.collapsed) || settings.collapseIcon || "chevron-right");
+        $$invalidate(43, collapseIconId = ($$invalidate(37, _a = settings.folderCollapseIconMap[file.path]) === null || _a === void 0 ? void 0 : _a.collapsed) || settings.collapseIcon || "chevron-right");
     }
     if ($$self.$$.dirty[0] & /*settings, file*/
     5 | $$self.$$.dirty[1] & /*_b*/
-    64) {
+    128) {
       $:
-        $$invalidate(39, collapseIconExpandedId = ($$invalidate(37, _b = settings.folderCollapseIconMap[file.path]) === null || _b === void 0 ? void 0 : _b.expanded) || settings.collapseIconExpanded || "chevron-down");
+        $$invalidate(42, collapseIconExpandedId = ($$invalidate(38, _b = settings.folderCollapseIconMap[file.path]) === null || _b === void 0 ? void 0 : _b.expanded) || settings.collapseIconExpanded || "chevron-down");
     }
-    if ($$self.$$.dirty[0] & /*collapseIconEl, collapsed, app, settings, file*/
-    12295 | $$self.$$.dirty[1] & /*collapseIconId, collapseIconExpandedId*/
-    768) {
+    if ($$self.$$.dirty[0] & /*collapsed*/
+    4096 | $$self.$$.dirty[1] & /*collapseIconId, collapseIconExpandedId*/
+    6144) {
       $:
-        if (collapseIconEl) {
+        $$invalidate(41, curColIcon = collapsed ? collapseIconId : collapseIconExpandedId);
+    }
+    if ($$self.$$.dirty[0] & /*settings, file*/
+    5) {
+      $:
+        $$invalidate(40, curColColor = settings.colorMap[file.path] || "");
+    }
+    if ($$self.$$.dirty[0] & /*collapseIconEl, collapsed, app*/
+    12290 | $$self.$$.dirty[1] & /*curColIcon, curColColor*/
+    1536) {
+      $:
+        if (collapseIconEl && collapsed !== void 0 && (collapseIconEl.dataset.snIcon !== curColIcon || collapseIconEl.dataset.snColor !== curColColor)) {
+          $$invalidate(13, collapseIconEl.dataset.snIcon = curColIcon, collapseIconEl);
+          $$invalidate(13, collapseIconEl.dataset.snColor = curColColor, collapseIconEl);
           $$invalidate(13, collapseIconEl.innerHTML = "", collapseIconEl);
-          setCustomIcon(collapseIconEl, collapsed ? collapseIconId : collapseIconExpandedId, app);
-          const color = settings.colorMap[file.path] || "";
-          if (color) {
-            collapseIconEl.style.setProperty("color", color, "important");
+          setCustomIcon(collapseIconEl, curColIcon, app);
+          if (curColColor) {
+            collapseIconEl.style.setProperty("color", curColColor, "important");
             const svg = collapseIconEl.querySelector("svg");
             if (svg) {
-              svg.style.setProperty("stroke", color, "important");
+              svg.style.setProperty("stroke", curColColor, "important");
               svg.style.setProperty("fill", "none", "important");
             }
           } else {
@@ -4700,11 +4927,11 @@ function instance($$self, $$props, $$invalidate) {
     if ($$self.$$.dirty[0] & /*selectedPaths, file*/
     132) {
       $:
-        $$invalidate(38, isMultiSelected = selectedPaths.size > 1 && selectedPaths.has(file.path));
+        $$invalidate(39, isMultiSelected = selectedPaths.size > 1 && selectedPaths.has(file.path));
     }
     if ($$self.$$.dirty[0] & /*selectedPaths, file*/
     132 | $$self.$$.dirty[1] & /*isMultiSelected*/
-    128) {
+    256) {
       $:
         targetPaths = isMultiSelected ? Array.from(selectedPaths) : [file.path];
     }
@@ -4736,6 +4963,7 @@ function instance($$self, $$props, $$invalidate) {
     renameValue,
     displayName,
     isHidden,
+    handleAuxClick,
     handleClick,
     saveRename,
     handleRenameKeydown,
@@ -4749,6 +4977,8 @@ function instance($$self, $$props, $$invalidate) {
     _a,
     _b,
     isMultiSelected,
+    curColColor,
+    curColIcon,
     collapseIconExpandedId,
     collapseIconId,
     iconId,
@@ -4787,7 +5017,7 @@ var TreeNode = class extends SvelteComponent {
         onUpdateSettings: 11
       },
       null,
-      [-1, -1]
+      [-1, -1, -1]
     );
   }
 };
@@ -5099,6 +5329,9 @@ function instance2($$self, $$props, $$invalidate) {
     }
   }
   function handleRootDrop(e) {
+    if (!dragState.itemPath)
+      return;
+    dragState.lastDropTime = Date.now();
     destroyDropIndicator();
     const fromPath = dragState.fromPath;
     const itemPath = dragState.itemPath;
@@ -5207,10 +5440,19 @@ function instance2($$self, $$props, $$invalidate) {
         const targetPath = detail.toPath ? `${detail.toPath}/${file.name}` : file.name;
         const savedSettings = settings;
         try {
-          $$invalidate(0, settings = updatePathsOnMove(settings, detail.itemPath, targetPath));
+          const itemPathPrefix = detail.itemPath + "/";
+          app.workspace.iterateAllLeaves((leaf) => {
+            var _a, _b;
+            const leafPath = (_b = (_a = leaf.view) === null || _a === void 0 ? void 0 : _a.file) === null || _b === void 0 ? void 0 : _b.path;
+            if (leafPath && (leafPath === detail.itemPath || leafPath.startsWith(itemPathPrefix))) {
+              leaf.detach();
+            }
+          });
           yield app.fileManager.renameFile(file, targetPath);
+          $$invalidate(0, settings = updatePathsOnMove(settings, detail.itemPath, targetPath));
         } catch (e) {
           console.error("Failed to move file:", e);
+          new import_obsidian4.Notice(`Cannot move "${file.name}": file is locked`);
           $$invalidate(0, settings = savedSettings);
           return;
         }
@@ -5382,12 +5624,21 @@ function instance2($$self, $$props, $$invalidate) {
         return;
       if ((e.key === "Delete" || e.key === "Backspace") && selectedPaths.size > 0) {
         e.preventDefault();
-        for (const p of selectedPaths) {
-          const f = app.vault.getAbstractFileByPath(p);
-          if (f)
-            app.vault.delete(f, true);
-        }
-        clearSelection();
+        (() => __awaiter(void 0, void 0, void 0, function* () {
+          if (settings.confirmDelete) {
+            const title = "Delete";
+            const desc = `Are you sure you want to delete these ${selectedPaths.size} items?`;
+            const confirmed = yield showConfirmModal(app, title, desc);
+            if (!confirmed)
+              return;
+          }
+          for (const p of selectedPaths) {
+            const f = app.vault.getAbstractFileByPath(p);
+            if (f)
+              yield deleteFile(app, f);
+          }
+          clearSelection();
+        }))();
       }
     };
     document.addEventListener("keydown", keydownHandler);
@@ -5528,10 +5779,16 @@ var SimpleNavigatorView = class extends import_obsidian5.ItemView {
         }
       }
     });
+    let bumpRaf = null;
     const bump = () => {
-      var _a;
-      this.refreshKey++;
-      (_a = this.component) == null ? void 0 : _a.$set({ refreshKey: this.refreshKey });
+      if (bumpRaf)
+        return;
+      bumpRaf = requestAnimationFrame(() => {
+        var _a;
+        bumpRaf = null;
+        this.refreshKey++;
+        (_a = this.component) == null ? void 0 : _a.$set({ refreshKey: this.refreshKey });
+      });
     };
     this.vaultRefs.push(
       this.app.vault.on("create", bump),
@@ -5575,7 +5832,8 @@ var DEFAULT_SETTINGS = {
   submenus: {},
   mainMenuCommands: [],
   newMenuCommands: [],
-  customIconsFolder: ""
+  customIconsFolder: "",
+  confirmDelete: true
 };
 var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab {
   constructor(app, plugin) {
@@ -5650,6 +5908,15 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
     new import_obsidian6.Setting(containerEl).setName("Rename folders on double-click").setDesc("Double-click a folder to rename it.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.renameOnDoubleClickFolders).onChange(async (value) => {
         this.plugin.settings.renameOnDoubleClickFolders = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    containerEl.createEl("h3", { text: "Deletion" });
+    new import_obsidian6.Setting(containerEl).setName("Confirm before deleting").setDesc(
+      "Show a confirmation dialog before deleting files and folders."
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.confirmDelete).onChange(async (value) => {
+        this.plugin.settings.confirmDelete = value;
         await this.plugin.saveSettings();
       })
     );

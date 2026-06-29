@@ -5,6 +5,7 @@ export const dragState: {
   targetFolder: string | null;
   toPath: string;
   newIndex: number;
+  lastDropTime: number;
 } = {
   fromPath: "",
   itemPath: "",
@@ -12,6 +13,7 @@ export const dragState: {
   targetFolder: null,
   toPath: "",
   newIndex: -1,
+  lastDropTime: 0,
 };
 
 let dropIndicatorEl: HTMLDivElement | null = null;
@@ -197,7 +199,7 @@ export function resolveDropTarget(x: number, y: number): DropTarget | null {
   let container = matching[matching.length - 1].container;
   let rect = matching[matching.length - 1].rect;
 
-  const EDGE = 28;
+  const EDGE = 48;
   if (matching.length > 1) {
     const nearBottom = y > rect.bottom - EDGE;
     if (nearBottom) {
@@ -238,7 +240,7 @@ export function resolveDropTarget(x: number, y: number): DropTarget | null {
         const childrenContainer = child.querySelector(".nav-folder-children") as HTMLElement | null;
 
         if (childrenContainer && childrenContainer.offsetHeight === 0) {
-          const edgeSize = cr.height * 0.15;
+          const edgeSize = cr.height * 0.25;
           if (y <= cr.top + edgeSize) {
             return { itemEl: child, containerPath, newIndex: computeNewIndex(child, y), targetFolder: null };
           }
@@ -284,7 +286,7 @@ export function resolveDropTarget(x: number, y: number): DropTarget | null {
         return { itemEl: child, containerPath, newIndex: -1, targetFolder: child.dataset.path || null };
       }
 
-      const fileEdge = cr.height * 0.15;
+      const fileEdge = cr.height * 0.25;
       if (y <= cr.top + fileEdge) {
         return { itemEl: child, containerPath, newIndex: i, targetFolder: null };
       }

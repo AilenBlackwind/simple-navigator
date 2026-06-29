@@ -56,9 +56,14 @@ export class SimpleNavigatorView extends ItemView {
       },
     });
 
+    let bumpRaf: number | null = null;
     const bump = () => {
-      this.refreshKey++;
-      this.component?.$set({ refreshKey: this.refreshKey });
+      if (bumpRaf) return;
+      bumpRaf = requestAnimationFrame(() => {
+        bumpRaf = null;
+        this.refreshKey++;
+        this.component?.$set({ refreshKey: this.refreshKey });
+      });
     };
 
     this.vaultRefs.push(

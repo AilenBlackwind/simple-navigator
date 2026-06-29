@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { App, TFolder, EventRef, TFile, Menu } from "obsidian";
+  import { App, TFolder, EventRef, TFile, Menu, Notice } from "obsidian";
   import { onMount, onDestroy } from "svelte";
   import TreeNode from "./TreeNode.svelte";
-  import { sortWithOrder } from "../utils";
+  import { sortWithOrder, deleteFile } from "../utils";
   import { dragState, createDropIndicator, updateDropIndicator, removeDropIndicator, destroyDropIndicator, clearFolderHighlight, highlightFolder, resolveDropTarget, updatePathsOnMove, updateAutoScroll, DROP_ZONE_BUFFER } from "../drag-state";
   import type { PluginSettings } from "../settings";
+  import { showConfirmModal } from "../modal";
 
   export let app: App;
   export let rootFolder: TFolder;
@@ -99,6 +100,8 @@
   }
 
   function handleRootDrop(e: DragEvent) {
+    if (!dragState.itemPath) return;
+    dragState.lastDropTime = Date.now();
     destroyDropIndicator();
 
     const fromPath = dragState.fromPath;
@@ -216,10 +219,18 @@
       const savedSettings = settings;
 
       try {
-        settings = updatePathsOnMove(settings, detail.itemPath, targetPath);
+        const itemPathPrefix = detail.itemPath + "/";
+        app.workspace.iterateAllLeaves((leaf) => {
+          const leafPath = (leaf.view as any)?.file?.path;
+          if (leafPath && (leafPath === detail.itemPath || leafPath.startsWith(itemPathPrefix))) {
+            leaf.detach();
+          }
+        });
         await app.fileManager.renameFile(file, targetPath);
+        settings = updatePathsOnMove(settings, detail.itemPath, targetPath);
       } catch (e) {
         console.error("Failed to move file:", e);
+        new Notice(`Cannot move "${file.name}": file is locked`);
         settings = savedSettings;
         return;
       }
@@ -407,11 +418,19 @@
         return;
       if ((e.key === "Delete" || e.key === "Backspace") && selectedPaths.size > 0) {
         e.preventDefault();
-        for (const p of selectedPaths) {
-          const f = app.vault.getAbstractFileByPath(p);
-          if (f) app.vault.delete(f, true);
-        }
-        clearSelection();
+        (async () => {
+          if (settings.confirmDelete) {
+            const title = "Delete";
+            const desc = `Are you sure you want to delete these ${selectedPaths.size} items?`;
+            const confirmed = await showConfirmModal(app, title, desc);
+            if (!confirmed) return;
+          }
+          for (const p of selectedPaths) {
+            const f = app.vault.getAbstractFileByPath(p);
+            if (f) await deleteFile(app, f);
+          }
+          clearSelection();
+        })();
       }
     };
     document.addEventListener("keydown", keydownHandler);

@@ -124,7 +124,11 @@ body.sn-is-dragging .workspace-header {
 }
 
 .simple-navigator-tree .nav-folder.is-collapsed > .nav-folder-children {
-  display: none;
+  display: none !important;
+}
+
+.simple-navigator-tree .nav-folder.is-collapsed.sn-drop-target > .nav-folder-children {
+  display: none !important;
 }
 
 .simple-navigator-tree .nav-folder.mod-root > .nav-folder-children {

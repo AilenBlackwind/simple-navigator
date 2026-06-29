@@ -32,6 +32,7 @@ export interface PluginSettings {
   mainMenuCommands: SubmenuEntry[];
   newMenuCommands: SubmenuEntry[];
   customIconsFolder: string;
+  confirmDelete: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -57,6 +58,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   mainMenuCommands: [],
   newMenuCommands: [],
   customIconsFolder: "",
+  confirmDelete: true,
 };
 
 export class SimpleNavigatorSettingTab extends PluginSettingTab {
@@ -193,6 +195,23 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.renameOnDoubleClickFolders)
           .onChange(async (value) => {
             this.plugin.settings.renameOnDoubleClickFolders = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    // --- Deletion ---
+    containerEl.createEl("h3", { text: "Deletion" });
+
+    new Setting(containerEl)
+      .setName("Confirm before deleting")
+      .setDesc(
+        "Show a confirmation dialog before deleting files and folders."
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.confirmDelete)
+          .onChange(async (value) => {
+            this.plugin.settings.confirmDelete = value;
             await this.plugin.saveSettings();
           })
       );

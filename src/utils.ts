@@ -152,26 +152,37 @@ export function isCustomIcon(value: string): boolean {
   return value.startsWith(CUSTOM_ICON_PREFIX);
 }
 
+export async function deleteFile(app: App, file: TAbstractFile): Promise<void> {
+  const trashOption = app.vault.getConfig("trashOption");
+  if (trashOption === "permanent") {
+    await app.vault.delete(file);
+  } else {
+    await app.vault.trash(file, trashOption === "system");
+  }
+}
+
 export function setCustomIcon(el: HTMLElement, value: string, app: App): void {
-  el.innerHTML = "";
-  if (isCustomIcon(value)) {
-    const svg = customSvgContent.get(value);
-    if (svg) {
-      el.innerHTML = svg;
-      const svgEl = el.querySelector("svg");
-      if (svgEl) {
-        svgEl.style.width = "16px";
-        svgEl.style.height = "16px";
+  try {
+    el.innerHTML = "";
+    if (isCustomIcon(value)) {
+      const svg = customSvgContent.get(value);
+      if (svg) {
+        el.innerHTML = svg;
+        const svgEl = el.querySelector("svg");
+        if (svgEl) {
+          svgEl.style.width = "16px";
+          svgEl.style.height = "16px";
+        }
+        return;
       }
-      return;
     }
-  }
-  el.style.display = "";
-  setIcon(el, value);
-  const svgEl = el.querySelector("svg");
-  if (svgEl) {
-    svgEl.style.width = "16px";
-    svgEl.style.height = "16px";
-    svgEl.style.strokeWidth = "2px";
-  }
+    el.style.display = "";
+    setIcon(el, value);
+    const svgEl = el.querySelector("svg");
+    if (svgEl) {
+      svgEl.style.width = "16px";
+      svgEl.style.height = "16px";
+      svgEl.style.strokeWidth = "2px";
+    }
+  } catch {}
 }

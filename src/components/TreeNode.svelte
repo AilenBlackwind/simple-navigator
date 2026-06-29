@@ -1,10 +1,10 @@
 <script lang="ts">
   import { TFile, TFolder, setIcon, Menu } from "obsidian";
   import type { App, TAbstractFile } from "obsidian";
-  import { sortWithOrder, defaultSortFn, countFiles, getFileIcon, getVisibleExtSet, setCustomIcon } from "../utils";
+  import { sortWithOrder, defaultSortFn, countFiles, getFileIcon, getVisibleExtSet, setCustomIcon, deleteFile } from "../utils";
   import { dragState, createDropIndicator, updateDropIndicator, removeDropIndicator, destroyDropIndicator, clearFolderHighlight, highlightFolder, resolveDropTarget, updatePathsOnMove, updateAutoScroll } from "../drag-state";
   import type { PluginSettings } from "../settings";
-  import { IconSuggestModal } from "../modal";
+  import { IconSuggestModal, showConfirmModal } from "../modal";
 
   export let app: App;
   export let file: TAbstractFile;
@@ -26,6 +26,7 @@
   export let onUpdateSettings: (s: PluginSettings) => Promise<void>;
 
   let collapsed = settings.collapsedPaths.includes(file.path);
+  $: collapsed = settings.collapsedPaths.includes(file.path);
   let collapseIconEl: HTMLSpanElement;
   let typeIconEl: HTMLSpanElement;
   let editingPath: string | null = null;
@@ -78,22 +79,26 @@
         : extHidden ? "file-text"
           : getFileIcon(file.name));
 
-  $: if (typeIconEl) {
+  $: if (typeIconEl && typeIconEl.dataset.snIcon !== iconId) {
+    typeIconEl.dataset.snIcon = iconId;
     setCustomIcon(typeIconEl, iconId, app);
   }
   $: collapseIconId = settings.folderCollapseIconMap[file.path]?.collapsed || settings.collapseIcon || "chevron-right";
 
   $: collapseIconExpandedId = settings.folderCollapseIconMap[file.path]?.expanded || settings.collapseIconExpanded || "chevron-down";
 
-  $: if (collapseIconEl) {
+  $: curColIcon = collapsed ? collapseIconId : collapseIconExpandedId;
+  $: curColColor = settings.colorMap[file.path] || "";
+  $: if (collapseIconEl && collapsed !== undefined && (collapseIconEl.dataset.snIcon !== curColIcon || collapseIconEl.dataset.snColor !== curColColor)) {
+    collapseIconEl.dataset.snIcon = curColIcon;
+    collapseIconEl.dataset.snColor = curColColor;
     collapseIconEl.innerHTML = "";
-    setCustomIcon(collapseIconEl, collapsed ? collapseIconId : collapseIconExpandedId, app);
-    const color = settings.colorMap[file.path] || "";
-    if (color) {
-      collapseIconEl.style.setProperty("color", color, "important");
+    setCustomIcon(collapseIconEl, curColIcon, app);
+    if (curColColor) {
+      collapseIconEl.style.setProperty("color", curColColor, "important");
       const svg = collapseIconEl.querySelector("svg");
       if (svg) {
-        svg.style.setProperty("stroke", color, "important");
+        svg.style.setProperty("stroke", curColColor, "important");
         svg.style.setProperty("fill", "none", "important");
       }
     } else {
@@ -114,7 +119,17 @@
   $: isMultiSelected = selectedPaths.size > 1 && selectedPaths.has(file.path);
   $: targetPaths = isMultiSelected ? Array.from(selectedPaths) : [file.path];
 
+  function handleAuxClick(e: MouseEvent) {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    if (file instanceof TFile) {
+      onClearSelection();
+      app.workspace.getLeaf('tab').openFile(file);
+    }
+  }
+
   function handleClick(e: MouseEvent) {
+    if (Date.now() - dragState.lastDropTime < 300) return;
     if (editingPath === file.path) return;
     if (e.shiftKey || e.ctrlKey) {
       onSelect(file.path, e.shiftKey, e.ctrlKey);
@@ -305,9 +320,17 @@
           .setIcon("trash-2")
           .setWarning(true)
           .onClick(async () => {
+            if (settings.confirmDelete) {
+              const title = "Delete";
+              const desc = targetPaths.length > 1
+                ? `Are you sure you want to delete these ${targetPaths.length} items?`
+                : `Are you sure you want to delete "${file.name}"?`;
+              const confirmed = await showConfirmModal(app, title, desc);
+              if (!confirmed) return;
+            }
             for (const p of targetPaths) {
               const f = app.vault.getAbstractFileByPath(p);
-              if (f) await app.vault.delete(f, true);
+              if (f) await deleteFile(app, f);
             }
           })
       );
@@ -336,9 +359,17 @@
           .setIcon("trash-2")
           .setWarning(true)
           .onClick(async () => {
+            if (settings.confirmDelete) {
+              const title = "Delete";
+              const desc = targetPaths.length > 1
+                ? `Are you sure you want to delete these ${targetPaths.length} items?`
+                : `Are you sure you want to delete "${file.name}"?`;
+              const confirmed = await showConfirmModal(app, title, desc);
+              if (!confirmed) return;
+            }
             for (const p of targetPaths) {
               const f = app.vault.getAbstractFileByPath(p);
-              if (f) await app.vault.delete(f, true);
+              if (f) await deleteFile(app, f);
             }
           })
       );
@@ -649,8 +680,11 @@
   }
 
   function handleDrop(e: DragEvent) {
+    dragState.lastDropTime = Date.now();
     e.stopPropagation();
     destroyDropIndicator();
+
+    if (!dragState.itemPath) return;
 
     const fromPath = dragState.fromPath;
     const itemPath = dragState.itemPath;
@@ -661,6 +695,9 @@
     } else if (dragState.toPath !== "" || dragState.newIndex >= 0) {
       onSortEnd({ fromPath, toPath: dragState.toPath, oldIndex, newIndex: dragState.newIndex, itemPath });
     }
+
+    dragState.itemPath = "";
+    dragState.fromPath = "";
   }
 
   function handleDragLeave(e: DragEvent) {
@@ -703,7 +740,8 @@
       <div class="nav-folder-title-content">{isArchived ? `${displayName} (${fileCount})` : file.name}</div>
       {/if}
     </div>
-    <div class="nav-folder-children" data-folder-path={file.path} style:--sn-color={settings.colorMap[file.path] || undefined} style:--guide-offset={4 + depth * 20 + 8 + "px"} style:--guide-width={1 / window.devicePixelRatio + "px"} on:dragover|preventDefault={handleDragOver} on:drop={handleDrop} on:dragleave={handleDragLeave}>
+    <div class="nav-folder-children" data-folder-path={file.path} style:display={collapsed ? 'none' : ''} style:visibility={collapsed ? 'hidden' : ''} style:overflow={collapsed ? 'hidden' : ''} style:--sn-color={settings.colorMap[file.path] || undefined} style:--guide-offset={4 + depth * 20 + 8 + "px"} style:--guide-width={1 / window.devicePixelRatio + "px"} on:dragover|preventDefault={handleDragOver} on:drop={handleDrop} on:dragleave={handleDragLeave}>
+      {#if !collapsed}
       {#each children as child (child.path)}
         <svelte:self
           {app}
@@ -720,6 +758,7 @@
           {onUpdateSettings}
         />
       {/each}
+      {/if}
     </div>
   </div>
 {:else}
@@ -729,6 +768,7 @@
       class="nav-file-title"
       draggable="true"
       on:click={handleClick}
+      on:auxclick={handleAuxClick}
       on:dblclick={handleDblClick}
       on:contextmenu={handleContextMenu}
       on:dragstart={handleDragStart}
