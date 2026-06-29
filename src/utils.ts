@@ -1,4 +1,4 @@
-import { App, TAbstractFile, TFile, TFolder, Vault, setIcon } from "obsidian";
+import { App, TAbstractFile, TFile, TFolder, Vault, setIcon, normalizePath } from "obsidian";
 import { PluginSettings } from "./settings";
 
 export function sortWithOrder(
@@ -99,7 +99,7 @@ export function cleanUpSettings(
     }
     settings.orderMap[parentPath] = settings.orderMap[parentPath].filter(
       (name) => {
-        const fullPath = parentPath ? `${parentPath}/${name}` : name;
+        const fullPath = parentPath ? normalizePath(`${parentPath}/${name}`) : name;
         return allPaths.has(fullPath);
       }
     );

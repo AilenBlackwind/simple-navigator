@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { App, TFolder, EventRef, TFile, Menu, Notice } from "obsidian";
+  import { App, TFolder, EventRef, TFile, Menu, Notice, normalizePath } from "obsidian";
   import { onMount, onDestroy } from "svelte";
   import TreeNode from "./TreeNode.svelte";
   import { sortWithOrder, deleteFile } from "../utils";
@@ -219,7 +219,7 @@
       }
 
       const targetPath = detail.toPath
-        ? `${detail.toPath}/${file.name}`
+        ? normalizePath(`${detail.toPath}/${file.name}`)
         : file.name;
 
       const savedSettings = settings;
@@ -326,7 +326,8 @@
         .setTitle("New note")
         .setIcon("file-plus")
         .onClick(async () => {
-          const path = app.vault.getAvailablePath("Untitled", "md");
+          const parent = app.fileManager.getNewFileParent();
+          const path = app.vault.getAvailablePath(normalizePath(parent.path + "/Untitled"), "md");
           await app.vault.create(path, "");
           const f = app.vault.getAbstractFileByPath(path);
           if (f instanceof TFile) {
@@ -339,7 +340,8 @@
         .setTitle("New folder")
         .setIcon("folder-plus")
         .onClick(async () => {
-          const path = app.vault.getAvailablePath("New folder", "");
+          const parent = app.fileManager.getNewFileParent();
+          const path = app.vault.getAvailablePath(normalizePath(parent.path + "/New folder"), "");
           await app.vault.createFolder(path);
         })
     );

@@ -1,3 +1,5 @@
+import { normalizePath } from "obsidian";
+
 export const dragState: {
   fromPath: string;
   itemPath: string;
@@ -329,7 +331,7 @@ export function updatePathsOnMove<T extends Record<string, unknown>>(settings: T
   const prefix = oldPath ? oldPath + "/" : "";
   const replace = (key: string) => {
     if (key === oldPath) return newPath;
-    if (prefix && key.startsWith(prefix)) return newPath + "/" + key.slice(prefix.length);
+    if (prefix && key.startsWith(prefix)) return normalizePath(newPath + "/" + key.slice(prefix.length));
     return key;
   };
   const next = { ...settings };

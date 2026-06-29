@@ -31,10 +31,10 @@ __export(main_exports, {
   default: () => SimpleNavigatorPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // src/SimpleNavigatorView.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // node_modules/svelte/src/runtime/internal/utils.js
 function noop() {
@@ -832,10 +832,10 @@ function __awaiter(thisArg, _arguments, P, generator) {
 }
 
 // src/components/TreeView.svelte
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // src/components/TreeNode.svelte
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/utils.ts
 var import_obsidian = require("obsidian");
@@ -958,6 +958,7 @@ function setCustomIcon(el, value, app) {
 }
 
 // src/drag-state.ts
+var import_obsidian2 = require("obsidian");
 var dragState = {
   fromPath: "",
   itemPath: "",
@@ -1241,7 +1242,7 @@ function updatePathsOnMove(settings, oldPath, newPath) {
     if (key === oldPath)
       return newPath;
     if (prefix && key.startsWith(prefix))
-      return newPath + "/" + key.slice(prefix.length);
+      return (0, import_obsidian2.normalizePath)(newPath + "/" + key.slice(prefix.length));
     return key;
   };
   const next = { ...settings };
@@ -1308,7 +1309,7 @@ function stopDragScroll() {
 }
 
 // src/modal.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 
 // src/generated/icon-list.ts
 var ICON_LIST = [
@@ -2779,7 +2780,7 @@ async function refreshCustomIcons(app, folderPath) {
   } catch (e) {
   }
 }
-var CommandSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
+var CommandSuggestModal = class extends import_obsidian3.FuzzySuggestModal {
   constructor(app, onSelect) {
     super(app);
     this.onSelect = onSelect;
@@ -2800,7 +2801,7 @@ var CommandSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
     this.onSelect(command);
   }
 };
-var IconSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
+var IconSuggestModal = class extends import_obsidian3.FuzzySuggestModal {
   constructor(app, customIconsFolder, onSelect) {
     super(app);
     this.onSelect = onSelect;
@@ -2841,7 +2842,7 @@ var IconSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
     this.onSelect(icon);
   }
 };
-var FolderSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
+var FolderSuggestModal = class extends import_obsidian3.FuzzySuggestModal {
   constructor(app, onSelect) {
     super(app);
     this.onSelect = onSelect;
@@ -2853,7 +2854,7 @@ var FolderSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
     ]);
   }
   getItems() {
-    return this.app.vault.getAllLoadedFiles().filter((f) => f instanceof import_obsidian2.TFolder);
+    return this.app.vault.getAllLoadedFiles().filter((f) => f instanceof import_obsidian3.TFolder);
   }
   getItemText(folder) {
     return folder.path || "(root)";
@@ -2868,7 +2869,7 @@ function showConfirmModal(app, title, description, confirmText) {
     modal.open();
   });
 }
-var ConfirmModal = class extends import_obsidian2.Modal {
+var ConfirmModal = class extends import_obsidian3.Modal {
   constructor(app, titleText, desc, confirmText, resolve) {
     super(app);
     this.titleText = titleText;
@@ -2881,7 +2882,7 @@ var ConfirmModal = class extends import_obsidian2.Modal {
     contentEl.empty();
     const headerDiv = contentEl.createDiv({ cls: "modal-header" });
     const iconEl = headerDiv.createSpan();
-    (0, import_obsidian2.setIcon)(iconEl, "trash-2");
+    (0, import_obsidian3.setIcon)(iconEl, "trash-2");
     iconEl.style.marginRight = "8px";
     iconEl.style.color = "var(--color-red)";
     headerDiv.createEl("h2", { text: this.titleText });
@@ -4182,7 +4183,7 @@ function instance($$self, $$props, $$invalidate) {
     if (e.button !== 1)
       return;
     e.preventDefault();
-    if (file instanceof import_obsidian3.TFile) {
+    if (file instanceof import_obsidian4.TFile) {
       onClearSelection();
       app.workspace.getLeaf("tab").openFile(file);
     }
@@ -4196,9 +4197,9 @@ function instance($$self, $$props, $$invalidate) {
       onSelect(file.path, e.shiftKey, e.ctrlKey);
       return;
     }
-    if (file instanceof import_obsidian3.TFile && file.path === activeFilePath) {
+    if (file instanceof import_obsidian4.TFile && file.path === activeFilePath) {
       onSelect(file.path, false, false);
-    } else if (file instanceof import_obsidian3.TFile) {
+    } else if (file instanceof import_obsidian4.TFile) {
       onClearSelection();
       app.workspace.getLeaf().openFile(file);
     } else {
@@ -4232,9 +4233,9 @@ function instance($$self, $$props, $$invalidate) {
         return;
       }
       const parentPath = file.parent ? file.parent.path : "";
-      const ext = file instanceof import_obsidian3.TFile ? file.extension : "";
+      const ext = file instanceof import_obsidian4.TFile ? file.extension : "";
       const finalName = ext && !newName.endsWith("." + ext) ? newName + "." + ext : newName;
-      const newPath = parentPath ? `${parentPath}/${finalName}` : finalName;
+      const newPath = parentPath ? (0, import_obsidian4.normalizePath)(`${parentPath}/${finalName}`) : finalName;
       const oldPath = file.path;
       const savedSettings = settings;
       try {
@@ -4273,10 +4274,10 @@ function instance($$self, $$props, $$invalidate) {
     return __awaiter(this, void 0, void 0, function* () {
       yield app.vault.createFolder(destPath);
       for (const child of src.children) {
-        if (child instanceof import_obsidian3.TFile) {
-          yield app.vault.copy(child, `${destPath}/${child.name}`);
-        } else if (child instanceof import_obsidian3.TFolder) {
-          yield duplicateFolderRecursive(child, `${destPath}/${child.name}`);
+        if (child instanceof import_obsidian4.TFile) {
+          yield app.vault.copy(child, (0, import_obsidian4.normalizePath)(`${destPath}/${child.name}`));
+        } else if (child instanceof import_obsidian4.TFolder) {
+          yield duplicateFolderRecursive(child, (0, import_obsidian4.normalizePath)(`${destPath}/${child.name}`));
         }
       }
     });
@@ -4321,20 +4322,20 @@ function instance($$self, $$props, $$invalidate) {
   function handleContextMenu(event) {
     event.preventDefault();
     event.stopPropagation();
-    const menu = new import_obsidian3.Menu();
+    const menu = new import_obsidian4.Menu();
     if (isFolder) {
       menu.addItem((item) => item.setTitle("New note").setIcon("file-plus").onClick(() => __awaiter(this, void 0, void 0, function* () {
         const folder = file;
-        const path = app.vault.getAvailablePath(folder.path + "/Untitled", "md");
+        const path = app.vault.getAvailablePath((0, import_obsidian4.normalizePath)(folder.path + "/Untitled"), "md");
         yield app.vault.create(path, "");
         const f = app.vault.getAbstractFileByPath(path);
-        if (f instanceof import_obsidian3.TFile) {
+        if (f instanceof import_obsidian4.TFile) {
           yield app.workspace.getLeaf().openFile(f);
         }
       })));
       menu.addItem((item) => item.setTitle("New folder").setIcon("folder-plus").onClick(() => __awaiter(this, void 0, void 0, function* () {
         const folder = file;
-        const path = app.vault.getAvailablePath(folder.path + "/New folder", "");
+        const path = app.vault.getAvailablePath((0, import_obsidian4.normalizePath)(folder.path + "/New folder"), "");
         yield app.vault.createFolder(path);
       })));
       const pluginInstance2 = () => app.plugins.plugins["simple-navigator"];
@@ -4362,14 +4363,14 @@ function instance($$self, $$props, $$invalidate) {
       menu.addSeparator();
       menu.addItem((item) => item.setTitle("Duplicate").setIcon("copy").onClick(() => __awaiter(this, void 0, void 0, function* () {
         var _a2;
-        if (file instanceof import_obsidian3.TFolder) {
+        if (file instanceof import_obsidian4.TFolder) {
           const parentPath = ((_a2 = file.parent) === null || _a2 === void 0 ? void 0 : _a2.path) || "";
           let newName = file.name + " (copy)";
-          let newPath = parentPath ? `${parentPath}/${newName}` : newName;
+          let newPath = parentPath ? (0, import_obsidian4.normalizePath)(`${parentPath}/${newName}`) : newName;
           let counter = 1;
           while (app.vault.getAbstractFileByPath(newPath)) {
             newName = file.name + ` (copy ${counter})`;
-            newPath = parentPath ? `${parentPath}/${newName}` : newName;
+            newPath = parentPath ? (0, import_obsidian4.normalizePath)(`${parentPath}/${newName}`) : newName;
             counter++;
           }
           yield duplicateFolderRecursive(file, newPath);
@@ -4394,7 +4395,7 @@ function instance($$self, $$props, $$invalidate) {
       menu.addSeparator();
     } else if (!isFolder) {
       menu.addItem((item) => item.setTitle("Duplicate").setIcon("copy").onClick(() => __awaiter(this, void 0, void 0, function* () {
-        if (file instanceof import_obsidian3.TFile) {
+        if (file instanceof import_obsidian4.TFile) {
           yield app.fileManager.duplicateFile(file);
         }
       })));
@@ -4787,7 +4788,7 @@ function instance($$self, $$props, $$invalidate) {
     if ($$self.$$.dirty[0] & /*file*/
     4) {
       $:
-        $$invalidate(17, isFolder = file instanceof import_obsidian3.TFolder);
+        $$invalidate(17, isFolder = file instanceof import_obsidian4.TFolder);
     }
     if ($$self.$$.dirty[0] & /*renameInputEl, editingPath, file, isFolder*/
     229380) {
@@ -4857,7 +4858,7 @@ function instance($$self, $$props, $$invalidate) {
     if ($$self.$$.dirty[0] & /*isArchived, file*/
     262148) {
       $:
-        $$invalidate(21, fileCount = isArchived && file instanceof import_obsidian3.TFolder ? countFiles(file) : 0);
+        $$invalidate(21, fileCount = isArchived && file instanceof import_obsidian4.TFolder ? countFiles(file) : 0);
     }
     if ($$self.$$.dirty[0] & /*settings, file, isArchived, isFolder*/
     393221 | $$self.$$.dirty[1] & /*extHidden*/
@@ -4927,7 +4928,7 @@ function instance($$self, $$props, $$invalidate) {
     if ($$self.$$.dirty[0] & /*isFolder, file, activeFilePath*/
     131092) {
       $:
-        $$invalidate(20, isActive = !isFolder && file instanceof import_obsidian3.TFile && file.path === activeFilePath);
+        $$invalidate(20, isActive = !isFolder && file instanceof import_obsidian4.TFile && file.path === activeFilePath);
     }
     if ($$self.$$.dirty[0] & /*settings, file*/
     5) {
@@ -5444,11 +5445,11 @@ function instance2($$self, $$props, $$invalidate) {
         const file = app.vault.getAbstractFileByPath(detail.itemPath);
         if (!file)
           return;
-        if (file instanceof import_obsidian4.TFolder && detail.toPath && (detail.toPath === detail.itemPath || detail.toPath.startsWith(detail.itemPath + "/"))) {
+        if (file instanceof import_obsidian5.TFolder && detail.toPath && (detail.toPath === detail.itemPath || detail.toPath.startsWith(detail.itemPath + "/"))) {
           console.warn("Cannot move folder into itself or descendant", detail.itemPath, detail.toPath);
           return;
         }
-        const targetPath = detail.toPath ? `${detail.toPath}/${file.name}` : file.name;
+        const targetPath = detail.toPath ? (0, import_obsidian5.normalizePath)(`${detail.toPath}/${file.name}`) : file.name;
         const savedSettings = settings;
         try {
           const itemPathPrefix = detail.itemPath + "/";
@@ -5463,7 +5464,7 @@ function instance2($$self, $$props, $$invalidate) {
           $$invalidate(0, settings = updatePathsOnMove(settings, detail.itemPath, targetPath));
         } catch (e) {
           console.error("Failed to move file:", e);
-          new import_obsidian4.Notice(`Cannot move "${file.name}": file is locked`);
+          new import_obsidian5.Notice(`Cannot move "${file.name}": file is locked`);
           $$invalidate(0, settings = savedSettings);
           return;
         }
@@ -5538,17 +5539,19 @@ function instance2($$self, $$props, $$invalidate) {
   }
   function handleRootContextMenu(event) {
     event.preventDefault();
-    const menu = new import_obsidian4.Menu();
+    const menu = new import_obsidian5.Menu();
     menu.addItem((item) => item.setTitle("New note").setIcon("file-plus").onClick(() => __awaiter(this, void 0, void 0, function* () {
-      const path = app.vault.getAvailablePath("Untitled", "md");
+      const parent = app.fileManager.getNewFileParent();
+      const path = app.vault.getAvailablePath((0, import_obsidian5.normalizePath)(parent.path + "/Untitled"), "md");
       yield app.vault.create(path, "");
       const f = app.vault.getAbstractFileByPath(path);
-      if (f instanceof import_obsidian4.TFile) {
+      if (f instanceof import_obsidian5.TFile) {
         yield app.workspace.getLeaf().openFile(f);
       }
     })));
     menu.addItem((item) => item.setTitle("New folder").setIcon("folder-plus").onClick(() => __awaiter(this, void 0, void 0, function* () {
-      const path = app.vault.getAvailablePath("New folder", "");
+      const parent = app.fileManager.getNewFileParent();
+      const path = app.vault.getAvailablePath((0, import_obsidian5.normalizePath)(parent.path + "/New folder"), "");
       yield app.vault.createFolder(path);
     })));
     if (settings.newMenuCommands && settings.newMenuCommands.length > 0) {
@@ -5759,7 +5762,7 @@ var TreeView_default = TreeView;
 
 // src/SimpleNavigatorView.ts
 var SIMPLE_NAVIGATOR_VIEW = "simple-navigator-view";
-var SimpleNavigatorView = class extends import_obsidian5.ItemView {
+var SimpleNavigatorView = class extends import_obsidian6.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.component = null;
@@ -5834,7 +5837,7 @@ var SimpleNavigatorView = class extends import_obsidian5.ItemView {
 };
 
 // src/settings.ts
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 var DEFAULT_SETTINGS = {
   orderMap: {},
   hiddenPaths: [],
@@ -5860,7 +5863,7 @@ var DEFAULT_SETTINGS = {
   customIconsFolder: "",
   confirmDelete: true
 };
-var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab {
+var SimpleNavigatorSettingTab = class extends import_obsidian7.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -5869,7 +5872,7 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl("h2", { text: "Simple Navigator Settings" });
-    new import_obsidian6.Setting(containerEl).setName("Icon follows color").setDesc(
+    new import_obsidian7.Setting(containerEl).setName("Icon follows color").setDesc(
       "When enabled, file and folder icons will inherit the custom color assigned to them."
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.iconFollowsColor).onChange(async (value) => {
@@ -5877,7 +5880,7 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("Visible file extensions").setDesc(
+    new import_obsidian7.Setting(containerEl).setName("Visible file extensions").setDesc(
       "Comma-separated list of extensions to show in filenames. Extensions not listed will be hidden. Leave empty to show all extensions."
     ).addText(
       (text2) => text2.setPlaceholder(".js, .pdf, .txt").setValue(this.plugin.settings.visibleExtensions).onChange(async (value) => {
@@ -5885,7 +5888,7 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("Hide default icons").setDesc(
+    new import_obsidian7.Setting(containerEl).setName("Hide default icons").setDesc(
       "Hides all default folder arrows and file icons. Custom icons set via 'Change icon...' will still be shown."
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.hideDefaultIcons).onChange(async (value) => {
@@ -5893,7 +5896,7 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("Enable collapse indicators").setDesc(
+    new import_obsidian7.Setting(containerEl).setName("Enable collapse indicators").setDesc(
       "Show custom icons next to folders to indicate collapsed/expanded state."
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.enableCollapseIcons).onChange(async (value) => {
@@ -5902,20 +5905,20 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
       })
     );
     if (this.plugin.settings.enableCollapseIcons) {
-      new import_obsidian6.Setting(containerEl).setName("Collapsed folder icon").setDesc("Icon name for collapsed folders. Any Lucide icon name. Default: chevron-right").addText(
+      new import_obsidian7.Setting(containerEl).setName("Collapsed folder icon").setDesc("Icon name for collapsed folders. Any Lucide icon name. Default: chevron-right").addText(
         (text2) => text2.setPlaceholder("chevron-right").setValue(this.plugin.settings.collapseIcon).onChange(async (value) => {
           this.plugin.settings.collapseIcon = value;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian6.Setting(containerEl).setName("Expanded folder icon").setDesc("Icon name for expanded folders. Any Lucide icon name. Default: chevron-down").addText(
+      new import_obsidian7.Setting(containerEl).setName("Expanded folder icon").setDesc("Icon name for expanded folders. Any Lucide icon name. Default: chevron-down").addText(
         (text2) => text2.setPlaceholder("chevron-down").setValue(this.plugin.settings.collapseIconExpanded).onChange(async (value) => {
           this.plugin.settings.collapseIconExpanded = value;
           await this.plugin.saveSettings();
         })
       );
     }
-    new import_obsidian6.Setting(containerEl).setName("Custom SVG icons folder").setDesc(
+    new import_obsidian7.Setting(containerEl).setName("Custom SVG icons folder").setDesc(
       "Path to a folder in your vault containing .svg files. Icons will appear in the icon search by filename. Leave empty to disable."
     ).addText(
       (text2) => text2.setPlaceholder("path/to/icons").setValue(this.plugin.settings.customIconsFolder).onChange(async (value) => {
@@ -5924,20 +5927,20 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
         refreshCustomIcons(this.app, value);
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("Rename files on double-click").setDesc("Double-click a file to rename it instead of opening it.").addToggle(
+    new import_obsidian7.Setting(containerEl).setName("Rename files on double-click").setDesc("Double-click a file to rename it instead of opening it.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.renameOnDoubleClickFiles).onChange(async (value) => {
         this.plugin.settings.renameOnDoubleClickFiles = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("Rename folders on double-click").setDesc("Double-click a folder to rename it.").addToggle(
+    new import_obsidian7.Setting(containerEl).setName("Rename folders on double-click").setDesc("Double-click a folder to rename it.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.renameOnDoubleClickFolders).onChange(async (value) => {
         this.plugin.settings.renameOnDoubleClickFolders = value;
         await this.plugin.saveSettings();
       })
     );
     containerEl.createEl("h3", { text: "Deletion" });
-    new import_obsidian6.Setting(containerEl).setName("Confirm before deleting").setDesc(
+    new import_obsidian7.Setting(containerEl).setName("Confirm before deleting").setDesc(
       "Show a confirmation dialog before deleting files and folders."
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.confirmDelete).onChange(async (value) => {
@@ -6313,7 +6316,7 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
 };
 
 // src/main.ts
-var SimpleNavigatorPlugin = class extends import_obsidian7.Plugin {
+var SimpleNavigatorPlugin = class extends import_obsidian8.Plugin {
   constructor() {
     super(...arguments);
     this.lastClicked = null;
@@ -6350,7 +6353,7 @@ var SimpleNavigatorPlugin = class extends import_obsidian7.Plugin {
       id: "collapse-all",
       name: "Collapse all folders",
       callback: async () => {
-        const allPaths = this.app.vault.getAllLoadedFiles().filter((f) => f instanceof import_obsidian7.TFolder).map((f) => f.path);
+        const allPaths = this.app.vault.getAllLoadedFiles().filter((f) => f instanceof import_obsidian8.TFolder).map((f) => f.path);
         this.settings = { ...this.settings, collapsedPaths: allPaths };
         await this.saveSettings();
       }

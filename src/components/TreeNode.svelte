@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { TFile, TFolder, setIcon, Menu } from "obsidian";
+  import { TFile, TFolder, setIcon, Menu, normalizePath } from "obsidian";
   import type { App, TAbstractFile } from "obsidian";
   import { sortWithOrder, defaultSortFn, countFiles, getFileIcon, getVisibleExtSet, setCustomIcon, deleteFile } from "../utils";
   import { dragState, createDropIndicator, updateDropIndicator, removeDropIndicator, destroyDropIndicator, clearFolderHighlight, highlightFolder, resolveDropTarget, updatePathsOnMove, updateAutoScroll } from "../drag-state";
@@ -172,7 +172,7 @@
     const parentPath = file.parent ? file.parent.path : "";
     const ext = file instanceof TFile ? file.extension : "";
     const finalName = ext && !newName.endsWith("." + ext) ? newName + "." + ext : newName;
-    const newPath = parentPath ? `${parentPath}/${finalName}` : finalName;
+    const newPath = parentPath ? normalizePath(`${parentPath}/${finalName}`) : finalName;
     const oldPath = file.path;
     const savedSettings = settings;
     try {
@@ -213,9 +213,9 @@
     await app.vault.createFolder(destPath);
     for (const child of src.children) {
       if (child instanceof TFile) {
-        await app.vault.copy(child, `${destPath}/${child.name}`);
+        await app.vault.copy(child, normalizePath(`${destPath}/${child.name}`));
       } else if (child instanceof TFolder) {
-        await duplicateFolderRecursive(child, `${destPath}/${child.name}`);
+        await duplicateFolderRecursive(child, normalizePath(`${destPath}/${child.name}`));
       }
     }
   }
@@ -253,7 +253,7 @@
           .setIcon("file-plus")
           .onClick(async () => {
             const folder = file as TFolder;
-            const path = app.vault.getAvailablePath(folder.path + "/Untitled", "md");
+            const path = app.vault.getAvailablePath(normalizePath(folder.path + "/Untitled"), "md");
             await app.vault.create(path, "");
             const f = app.vault.getAbstractFileByPath(path);
             if (f instanceof TFile) {
@@ -267,7 +267,7 @@
           .setIcon("folder-plus")
           .onClick(async () => {
             const folder = file as TFolder;
-            const path = app.vault.getAvailablePath(folder.path + "/New folder", "");
+            const path = app.vault.getAvailablePath(normalizePath(folder.path + "/New folder"), "");
             await app.vault.createFolder(path);
           })
       );
@@ -299,11 +299,11 @@
             if (file instanceof TFolder) {
               const parentPath = file.parent?.path || "";
               let newName = file.name + " (copy)";
-              let newPath = parentPath ? `${parentPath}/${newName}` : newName;
+              let newPath = parentPath ? normalizePath(`${parentPath}/${newName}`) : newName;
               let counter = 1;
               while (app.vault.getAbstractFileByPath(newPath)) {
                 newName = file.name + ` (copy ${counter})`;
-                newPath = parentPath ? `${parentPath}/${newName}` : newName;
+                newPath = parentPath ? normalizePath(`${parentPath}/${newName}`) : newName;
                 counter++;
               }
               await duplicateFolderRecursive(file, newPath);
