@@ -326,8 +326,9 @@
         .setTitle("New note")
         .setIcon("file-plus")
         .onClick(async () => {
-          const parent = app.fileManager.getNewFileParent();
-          const path = app.vault.getAvailablePath(normalizePath(parent.path + "/Untitled"), "md");
+          const parent = app.fileManager.getNewFileParent("");
+          const basePath = parent.path ? normalizePath(`${parent.path}/Untitled`) : "Untitled";
+          const path = app.vault.getAvailablePath(basePath, "md");
           await app.vault.create(path, "");
           const f = app.vault.getAbstractFileByPath(path);
           if (f instanceof TFile) {
@@ -340,8 +341,9 @@
         .setTitle("New folder")
         .setIcon("folder-plus")
         .onClick(async () => {
-          const parent = app.fileManager.getNewFileParent();
-          const path = app.vault.getAvailablePath(normalizePath(parent.path + "/New folder"), "");
+          const parent = app.fileManager.getNewFileParent("");
+          const basePath = parent.path ? normalizePath(`${parent.path}/New folder`) : "New folder";
+          const path = app.vault.getAvailablePath(basePath, "");
           await app.vault.createFolder(path);
         })
     );

@@ -5541,8 +5541,9 @@ function instance2($$self, $$props, $$invalidate) {
     event.preventDefault();
     const menu = new import_obsidian5.Menu();
     menu.addItem((item) => item.setTitle("New note").setIcon("file-plus").onClick(() => __awaiter(this, void 0, void 0, function* () {
-      const parent = app.fileManager.getNewFileParent();
-      const path = app.vault.getAvailablePath((0, import_obsidian5.normalizePath)(parent.path + "/Untitled"), "md");
+      const parent = app.fileManager.getNewFileParent("");
+      const basePath = parent.path ? (0, import_obsidian5.normalizePath)(`${parent.path}/Untitled`) : "Untitled";
+      const path = app.vault.getAvailablePath(basePath, "md");
       yield app.vault.create(path, "");
       const f = app.vault.getAbstractFileByPath(path);
       if (f instanceof import_obsidian5.TFile) {
@@ -5550,8 +5551,9 @@ function instance2($$self, $$props, $$invalidate) {
       }
     })));
     menu.addItem((item) => item.setTitle("New folder").setIcon("folder-plus").onClick(() => __awaiter(this, void 0, void 0, function* () {
-      const parent = app.fileManager.getNewFileParent();
-      const path = app.vault.getAvailablePath((0, import_obsidian5.normalizePath)(parent.path + "/New folder"), "");
+      const parent = app.fileManager.getNewFileParent("");
+      const basePath = parent.path ? (0, import_obsidian5.normalizePath)(`${parent.path}/New folder`) : "New folder";
+      const path = app.vault.getAvailablePath(basePath, "");
       yield app.vault.createFolder(path);
     })));
     if (settings.newMenuCommands && settings.newMenuCommands.length > 0) {
