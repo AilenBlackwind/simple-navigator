@@ -478,12 +478,11 @@
 
 <div
   class="simple-navigator-tree nav-folder mod-root"
-  on:click|self={clearSelection}
   on:dragover|preventDefault={handleRootDragOver}
   on:drop={handleRootDrop}
   on:dragleave={handleRootDragLeave}
 >
-  <div class="nav-folder-children" data-folder-path="">
+  <div class="nav-folder-children" data-folder-path="" on:click|self={clearSelection}>
     {#each children as child (child.path)}
       <TreeNode
         {app}

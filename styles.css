@@ -153,10 +153,16 @@ body.sn-is-dragging .workspace-header {
 
 .simple-navigator-tree .is-selected > .nav-folder-title,
 .simple-navigator-tree .is-selected > .nav-file-title {
-  background-color: var(--nav-item-background-active, var(--background-modifier-hover));
+  background-color: color-mix(in srgb, var(--text-accent) 10%, transparent);
 }
 
-.simple-navigator-tree .is-active.is-selected > .nav-file-title {
+.simple-navigator-tree .is-selected > .nav-folder-title:hover,
+.simple-navigator-tree .is-selected > .nav-file-title:hover {
+  background-color: color-mix(in srgb, var(--text-accent) 14%, transparent);
+}
+
+.simple-navigator-tree .nav-file-title.is-active.is-selected {
+  background-color: color-mix(in srgb, var(--text-accent) 10%, var(--nav-item-background-active, var(--background-modifier-hover)));
   box-shadow: inset 0 0 0 1px var(--background-modifier-border);
 }
 

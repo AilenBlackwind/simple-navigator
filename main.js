@@ -5204,7 +5204,7 @@ function create_fragment2(ctx) {
       current = true;
       if (!mounted) {
         dispose = [
-          listen(div1, "click", self(
+          listen(div0, "click", self(
             /*clearSelection*/
             ctx[9]
           )),
