@@ -135,10 +135,9 @@
       onSelect(file.path, e.shiftKey, e.ctrlKey);
       return;
     }
-    if (file instanceof TFile && file.path === activeFilePath) {
-      onSelect(file.path, false, false);
-    } else if (file instanceof TFile) {
-      onSelect(file.path, false, false);
+    onClearSelection();
+    onSelect(file.path, false, false);
+    if (file instanceof TFile) {
       app.workspace.getLeaf().openFile(file);
     } else {
       collapsed = !collapsed;

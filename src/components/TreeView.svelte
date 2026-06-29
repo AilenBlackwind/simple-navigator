@@ -55,7 +55,6 @@
       }
       selectedPaths = new Set(selectedPaths);
     } else {
-      selectedPaths = new Set([path]);
       lastClickedPath = path;
     }
   }

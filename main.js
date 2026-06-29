@@ -4197,10 +4197,9 @@ function instance($$self, $$props, $$invalidate) {
       onSelect(file.path, e.shiftKey, e.ctrlKey);
       return;
     }
-    if (file instanceof import_obsidian4.TFile && file.path === activeFilePath) {
-      onSelect(file.path, false, false);
-    } else if (file instanceof import_obsidian4.TFile) {
-      onSelect(file.path, false, false);
+    onClearSelection();
+    onSelect(file.path, false, false);
+    if (file instanceof import_obsidian4.TFile) {
       app.workspace.getLeaf().openFile(file);
     } else {
       $$invalidate(12, collapsed = !collapsed);
@@ -5307,7 +5306,6 @@ function instance2($$self, $$props, $$invalidate) {
       }
       $$invalidate(6, selectedPaths = new Set(selectedPaths));
     } else {
-      $$invalidate(6, selectedPaths = /* @__PURE__ */ new Set([path]));
       lastClickedPath = path;
     }
   }
