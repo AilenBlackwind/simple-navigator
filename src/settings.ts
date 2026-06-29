@@ -411,12 +411,18 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
         renderSubmenus.call(this);
       };
 
+      renderSubmenuSections.call(this);
+    }
+
+    function renderSubmenuSections() {
+      const existing = submenuSection.querySelectorAll(".sn-submenu-section");
+      for (const el of existing) el.remove();
+
       for (const [sectionName, entries] of Object.entries(this.plugin.settings.submenus)) {
-        if (entries.length === 0 && sectionName === "New") {
-          // skip rendering empty "New" section — user said leave it empty
-        }
+        if (entries.length === 0 && sectionName === "New") continue;
 
         const sectionDiv = submenuSection.createDiv();
+        sectionDiv.className = "sn-submenu-section";
         sectionDiv.style.marginBottom = "8px";
         sectionDiv.style.border = "1px solid var(--background-modifier-border)";
         sectionDiv.style.borderRadius = "4px";
@@ -445,13 +451,13 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
           delete next[sectionName];
           this.plugin.settings.submenus = next;
           await this.plugin.saveSettings();
-          renderSubmenus.call(this);
+          renderSubmenuSections.call(this);
         };
 
         const entriesDiv = sectionDiv.createDiv();
 
         for (let i = 0; i < entries.length; i++) {
-          renderEntryRow.call(this, entriesDiv, entries, i, () => this.plugin.settings.submenus[sectionName]);
+          renderEntryRow.call(this, entriesDiv, entries, i, () => this.plugin.settings.submenus[sectionName], () => renderSubmenuSections.call(this));
         }
 
         const addEntryRow = sectionDiv.createDiv();
@@ -463,7 +469,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
           entries.push({ label: "New command", commandId: "" });
           this.plugin.settings.submenus = { ...this.plugin.settings.submenus };
           await this.plugin.saveSettings();
-          renderSubmenus.call(this);
+          renderSubmenuSections.call(this);
         };
       }
     }
@@ -483,7 +489,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       const list = this.plugin.settings.mainMenuCommands;
 
       for (let i = 0; i < list.length; i++) {
-        renderEntryRow.call(this, mainDesc, list, i, () => this.plugin.settings.mainMenuCommands);
+        renderEntryRow.call(this, mainDesc, list, i, () => this.plugin.settings.mainMenuCommands, () => renderMainCommands.call(this));
       }
 
       const addRow = mainDesc.createDiv();
@@ -505,7 +511,8 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       container: HTMLElement,
       list: { label: string; commandId: string; icon?: string }[],
       index: number,
-      getList: () => { label: string; commandId: string; icon?: string }[]
+      getList: () => { label: string; commandId: string; icon?: string }[],
+      onRemove?: () => void
     ) {
       const row = container.createDiv();
       row.style.display = "flex";
@@ -590,9 +597,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
         }
         list.length = updated.length;
         await this.plugin.saveSettings();
-        renderSubmenus.call(this);
-        renderMainCommands.call(this);
-        renderArchived.call(this);
+        if (onRemove) onRemove();
       };
 
       labelInput.onchange = async () => {
@@ -620,7 +625,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       const list = this.plugin.settings.newMenuCommands;
 
       for (let i = 0; i < list.length; i++) {
-        renderEntryRow.call(this, newDesc, list, i, () => this.plugin.settings.newMenuCommands);
+        renderEntryRow.call(this, newDesc, list, i, () => this.plugin.settings.newMenuCommands, () => renderNewCommands.call(this));
       }
 
       const addRow = newDesc.createDiv();

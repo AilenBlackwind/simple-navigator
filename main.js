@@ -6167,10 +6167,17 @@ var SimpleNavigatorSettingTab = class extends import_obsidian7.PluginSettingTab 
         nameInput.value = "";
         renderSubmenus.call(this);
       };
+      renderSubmenuSections.call(this);
+    }
+    function renderSubmenuSections() {
+      const existing = submenuSection.querySelectorAll(".sn-submenu-section");
+      for (const el of existing)
+        el.remove();
       for (const [sectionName, entries] of Object.entries(this.plugin.settings.submenus)) {
-        if (entries.length === 0 && sectionName === "New") {
-        }
+        if (entries.length === 0 && sectionName === "New")
+          continue;
         const sectionDiv = submenuSection.createDiv();
+        sectionDiv.className = "sn-submenu-section";
         sectionDiv.style.marginBottom = "8px";
         sectionDiv.style.border = "1px solid var(--background-modifier-border)";
         sectionDiv.style.borderRadius = "4px";
@@ -6196,11 +6203,11 @@ var SimpleNavigatorSettingTab = class extends import_obsidian7.PluginSettingTab 
           delete next[sectionName];
           this.plugin.settings.submenus = next;
           await this.plugin.saveSettings();
-          renderSubmenus.call(this);
+          renderSubmenuSections.call(this);
         };
         const entriesDiv = sectionDiv.createDiv();
         for (let i = 0; i < entries.length; i++) {
-          renderEntryRow.call(this, entriesDiv, entries, i, () => this.plugin.settings.submenus[sectionName]);
+          renderEntryRow.call(this, entriesDiv, entries, i, () => this.plugin.settings.submenus[sectionName], () => renderSubmenuSections.call(this));
         }
         const addEntryRow = sectionDiv.createDiv();
         addEntryRow.style.marginTop = "4px";
@@ -6210,7 +6217,7 @@ var SimpleNavigatorSettingTab = class extends import_obsidian7.PluginSettingTab 
           entries.push({ label: "New command", commandId: "" });
           this.plugin.settings.submenus = { ...this.plugin.settings.submenus };
           await this.plugin.saveSettings();
-          renderSubmenus.call(this);
+          renderSubmenuSections.call(this);
         };
       }
     }
@@ -6225,7 +6232,7 @@ var SimpleNavigatorSettingTab = class extends import_obsidian7.PluginSettingTab 
       mainDesc.empty();
       const list = this.plugin.settings.mainMenuCommands;
       for (let i = 0; i < list.length; i++) {
-        renderEntryRow.call(this, mainDesc, list, i, () => this.plugin.settings.mainMenuCommands);
+        renderEntryRow.call(this, mainDesc, list, i, () => this.plugin.settings.mainMenuCommands, () => renderMainCommands.call(this));
       }
       const addRow = mainDesc.createDiv();
       addRow.style.marginTop = "8px";
@@ -6240,7 +6247,7 @@ var SimpleNavigatorSettingTab = class extends import_obsidian7.PluginSettingTab 
         renderMainCommands.call(this);
       };
     }
-    function renderEntryRow(container, list, index, getList) {
+    function renderEntryRow(container, list, index, getList, onRemove) {
       const row = container.createDiv();
       row.style.display = "flex";
       row.style.gap = "8px";
@@ -6320,9 +6327,8 @@ var SimpleNavigatorSettingTab = class extends import_obsidian7.PluginSettingTab 
         }
         list.length = updated.length;
         await this.plugin.saveSettings();
-        renderSubmenus.call(this);
-        renderMainCommands.call(this);
-        renderArchived.call(this);
+        if (onRemove)
+          onRemove();
       };
       labelInput.onchange = async () => {
         list[index].label = labelInput.value;
@@ -6344,7 +6350,7 @@ var SimpleNavigatorSettingTab = class extends import_obsidian7.PluginSettingTab 
       newDesc.empty();
       const list = this.plugin.settings.newMenuCommands;
       for (let i = 0; i < list.length; i++) {
-        renderEntryRow.call(this, newDesc, list, i, () => this.plugin.settings.newMenuCommands);
+        renderEntryRow.call(this, newDesc, list, i, () => this.plugin.settings.newMenuCommands, () => renderNewCommands.call(this));
       }
       const addRow = newDesc.createDiv();
       addRow.style.marginTop = "8px";
