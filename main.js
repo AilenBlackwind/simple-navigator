@@ -966,7 +966,8 @@ var dragState = {
   targetFolder: null,
   toPath: "",
   newIndex: -1,
-  lastDropTime: 0
+  lastDropTime: 0,
+  batchPaths: []
 };
 var dropIndicatorEl = null;
 var _lastHighlightAt = 0;
@@ -1076,7 +1077,7 @@ function removeDropIndicator() {
 }
 function destroyDropIndicator() {
   stopDragScroll();
-  clearFolderHighlight();
+  clearFolderHighlight(true);
   hideGuideLineAnim();
   if (guideLineAnimEl) {
     guideLineAnimEl.remove();
@@ -1159,7 +1160,7 @@ function resolveDropTarget(x, y) {
       const ccGapRect = container.getBoundingClientRect();
       if (y > ccGapRect.top + EDGE && y < ccGapRect.bottom - EDGE) {
         const folderEl = container.closest(".nav-folder");
-        if (folderEl && folderEl.dataset.path && folderEl.dataset.path !== dragState.itemPath) {
+        if (folderEl && folderEl.dataset.path && folderEl.dataset.path !== dragState.itemPath && !dragState.batchPaths.includes(folderEl.dataset.path)) {
           return { itemEl: folderEl, containerPath, newIndex: -1, targetFolder: containerPath };
         }
       }
@@ -1214,7 +1215,7 @@ function resolveDropTarget(x, y) {
         return { itemEl: child, containerPath, newIndex: i + 1, targetFolder: null };
       }
       const ccFolderEl = container.closest(".nav-folder");
-      if (ccFolderEl && ccFolderEl.dataset.path && ccFolderEl.dataset.path !== dragState.itemPath) {
+      if (ccFolderEl && ccFolderEl.dataset.path && ccFolderEl.dataset.path !== dragState.itemPath && !dragState.batchPaths.includes(ccFolderEl.dataset.path)) {
         return { itemEl: ccFolderEl, containerPath, newIndex: -1, targetFolder: containerPath };
       }
       return { itemEl: child, containerPath, newIndex: i, targetFolder: null };
@@ -1230,7 +1231,7 @@ function resolveDropTarget(x, y) {
   }
   if (!nearEdge2) {
     const folderEl = container.closest(".nav-folder");
-    if (folderEl && folderEl.dataset.path && folderEl.dataset.path !== dragState.itemPath) {
+    if (folderEl && folderEl.dataset.path && folderEl.dataset.path !== dragState.itemPath && !dragState.batchPaths.includes(folderEl.dataset.path)) {
       return { itemEl: folderEl, containerPath, newIndex: -1, targetFolder: containerPath };
     }
   }
@@ -4645,6 +4646,22 @@ function instance($$self, $$props, $$invalidate) {
     dragState.targetFolder = null;
     dragState.toPath = "";
     dragState.newIndex = -1;
+    const sameParentSelected = Array.from(selectedPaths).filter((p) => {
+      const pp = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
+      return pp === fromPath;
+    });
+    const batchSet = new Set(sameParentSelected);
+    batchSet.add(itemPath);
+    if (batchSet.size >= 2) {
+      const domChildren = Array.from(container.children);
+      dragState.batchPaths = Array.from(batchSet).sort((a, b) => {
+        const aEl = domChildren.find((el) => el.dataset.path === a);
+        const bEl = domChildren.find((el) => el.dataset.path === b);
+        return aEl && bEl ? Array.from(domChildren).indexOf(aEl) - Array.from(domChildren).indexOf(bEl) : 0;
+      });
+    } else {
+      dragState.batchPaths = [];
+    }
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", itemPath);
     const color = settings.colorMap[itemPath] || "var(--text-faint)";
@@ -4691,13 +4708,15 @@ function instance($$self, $$props, $$invalidate) {
     const fromPath = dragState.fromPath;
     const itemPath = dragState.itemPath;
     const oldIndex = dragState.oldIndex;
+    const batchPaths = dragState.batchPaths.length > 0 ? dragState.batchPaths : void 0;
     if (dragState.targetFolder) {
       onSortEnd({
         fromPath,
         toPath: dragState.targetFolder,
         oldIndex,
         newIndex: -1,
-        itemPath
+        itemPath,
+        batchPaths
       });
     } else if (dragState.toPath !== "" || dragState.newIndex >= 0) {
       onSortEnd({
@@ -4705,11 +4724,13 @@ function instance($$self, $$props, $$invalidate) {
         toPath: dragState.toPath,
         oldIndex,
         newIndex: dragState.newIndex,
-        itemPath
+        itemPath,
+        batchPaths
       });
     }
     dragState.itemPath = "";
     dragState.fromPath = "";
+    dragState.batchPaths = [];
   }
   function handleDragLeave(e) {
     const target = e.currentTarget;
@@ -4721,6 +4742,7 @@ function instance($$self, $$props, $$invalidate) {
   function handleDragEnd(e) {
     destroyDropIndicator();
     document.body.classList.remove("sn-is-dragging");
+    dragState.batchPaths = [];
   }
   function span_binding($$value) {
     binding_callbacks[$$value ? "unshift" : "push"](() => {
@@ -5346,6 +5368,7 @@ function instance2($$self, $$props, $$invalidate) {
     const fromPath = dragState.fromPath;
     const itemPath = dragState.itemPath;
     const oldIndex = dragState.oldIndex;
+    const batchPaths = dragState.batchPaths.length > 0 ? dragState.batchPaths : void 0;
     try {
       if (dragState.targetFolder) {
         handleSortEnd({
@@ -5353,7 +5376,8 @@ function instance2($$self, $$props, $$invalidate) {
           toPath: dragState.targetFolder,
           oldIndex,
           newIndex: -1,
-          itemPath
+          itemPath,
+          batchPaths
         });
       } else if (dragState.toPath !== "" || dragState.newIndex >= 0) {
         handleSortEnd({
@@ -5361,7 +5385,8 @@ function instance2($$self, $$props, $$invalidate) {
           toPath: dragState.toPath,
           oldIndex,
           newIndex: dragState.newIndex,
-          itemPath
+          itemPath,
+          batchPaths
         });
       }
     } catch (err) {
@@ -5406,7 +5431,9 @@ function instance2($$self, $$props, $$invalidate) {
     handleRootDrop(e);
   }
   function handleSortEnd(detail) {
+    var _a;
     return __awaiter(this, void 0, void 0, function* () {
+      const items = detail.batchPaths && detail.batchPaths.length > 0 ? detail.batchPaths : [detail.itemPath];
       if (detail.fromPath === detail.toPath && detail.newIndex >= 0) {
         if (detail.fromPath && settings.archivedPaths.includes(detail.fromPath))
           return;
@@ -5415,12 +5442,8 @@ function instance2($$self, $$props, $$invalidate) {
           console.warn("Container not found for", detail.fromPath);
           return;
         }
-        const itemName = detail.itemPath.split("/").pop() || detail.itemPath;
-        let adjustedNewIndex = detail.newIndex;
-        if (adjustedNewIndex > detail.oldIndex) {
-          adjustedNewIndex--;
-        }
-        const orderedNames = [];
+        const itemNames = items.map((p) => p.split("/").pop() || p);
+        let orderedNames = [];
         for (let i = 0; i < container.children.length; i++) {
           const child = container.children[i];
           const path = child.dataset.path;
@@ -5430,42 +5453,68 @@ function instance2($$self, $$props, $$invalidate) {
               orderedNames.push(name);
           }
         }
-        const idx = orderedNames.indexOf(itemName);
-        if (idx >= 0) {
-          orderedNames.splice(idx, 1);
-          orderedNames.splice(adjustedNewIndex, 0, itemName);
+        if (items.length === 1) {
+          const itemName = itemNames[0];
+          let adjustedNewIndex = detail.newIndex;
+          if (adjustedNewIndex > detail.oldIndex)
+            adjustedNewIndex--;
+          const idx = orderedNames.indexOf(itemName);
+          if (idx >= 0) {
+            orderedNames.splice(idx, 1);
+            orderedNames.splice(adjustedNewIndex, 0, itemName);
+          }
+        } else {
+          const preRemoveIndices = itemNames.map((name) => orderedNames.indexOf(name)).filter((idx) => idx >= 0);
+          const sortedDesc = [...preRemoveIndices].sort((a, b) => b - a);
+          for (const idx of sortedDesc)
+            orderedNames.splice(idx, 1);
+          const numBeforeNew = preRemoveIndices.filter((idx) => idx < detail.newIndex).length;
+          const adjustedNewIndex = Math.max(0, detail.newIndex - numBeforeNew);
+          const safeIndex = Math.min(adjustedNewIndex, orderedNames.length);
+          orderedNames.splice(safeIndex, 0, ...itemNames);
         }
         $$invalidate(0, settings = Object.assign(Object.assign({}, settings), {
           orderMap: Object.assign(Object.assign({}, settings.orderMap), { [detail.fromPath]: orderedNames })
         }));
         yield onUpdateSettings(settings);
       } else {
-        const file = app.vault.getAbstractFileByPath(detail.itemPath);
-        if (!file)
-          return;
-        if (file instanceof import_obsidian5.TFolder && detail.toPath && (detail.toPath === detail.itemPath || detail.toPath.startsWith(detail.itemPath + "/"))) {
-          console.warn("Cannot move folder into itself or descendant", detail.itemPath, detail.toPath);
-          return;
-        }
-        const targetPath = detail.toPath ? (0, import_obsidian5.normalizePath)(`${detail.toPath}/${file.name}`) : file.name;
         const savedSettings = settings;
+        let currentSettings = settings;
+        const movedItems = [];
         try {
-          const itemPathPrefix = detail.itemPath + "/";
-          app.workspace.iterateAllLeaves((leaf) => {
-            var _a, _b;
-            const leafPath = (_b = (_a = leaf.view) === null || _a === void 0 ? void 0 : _a.file) === null || _b === void 0 ? void 0 : _b.path;
-            if (leafPath && (leafPath === detail.itemPath || leafPath.startsWith(itemPathPrefix))) {
-              leaf.detach();
+          for (const itemPath of items) {
+            const file = app.vault.getAbstractFileByPath(itemPath);
+            if (!file)
+              continue;
+            if (file instanceof import_obsidian5.TFolder && detail.toPath && (detail.toPath === itemPath || detail.toPath.startsWith(itemPath + "/"))) {
+              console.warn("Cannot move folder into itself or descendant", itemPath, detail.toPath);
+              continue;
             }
-          });
-          yield app.fileManager.renameFile(file, targetPath);
-          $$invalidate(0, settings = updatePathsOnMove(settings, detail.itemPath, targetPath));
+            const targetPath = detail.toPath ? (0, import_obsidian5.normalizePath)(`${detail.toPath}/${file.name}`) : file.name;
+            const itemPathPrefix = itemPath + "/";
+            app.workspace.iterateAllLeaves((leaf) => {
+              var _a2, _b;
+              const leafPath = (_b = (_a2 = leaf.view) === null || _a2 === void 0 ? void 0 : _a2.file) === null || _b === void 0 ? void 0 : _b.path;
+              if (leafPath && (leafPath === itemPath || leafPath.startsWith(itemPathPrefix))) {
+                leaf.detach();
+              }
+            });
+            yield app.fileManager.renameFile(file, targetPath);
+            currentSettings = updatePathsOnMove(currentSettings, itemPath, targetPath);
+            movedItems.push({
+              oldPath: itemPath,
+              newPath: targetPath,
+              file
+            });
+          }
         } catch (e) {
+          const failedItem = movedItems.length > 0 ? movedItems[movedItems.length - 1] : null;
           console.error("Failed to move file:", e);
-          new import_obsidian5.Notice(`Cannot move "${file.name}": file is locked`);
+          new import_obsidian5.Notice(`Cannot move "${((_a = failedItem === null || failedItem === void 0 ? void 0 : failedItem.file) === null || _a === void 0 ? void 0 : _a.name) || items[0]}": file is locked`);
           $$invalidate(0, settings = savedSettings);
           return;
         }
+        $$invalidate(0, settings = currentSettings);
         const getFolder = (p) => p === "" ? app.vault.getRoot() : app.vault.getAbstractFileByPath(p);
         const sourceFolder = getFolder(detail.fromPath);
         const targetFolder = getFolder(detail.toPath);
@@ -5495,6 +5544,7 @@ function instance2($$self, $$props, $$invalidate) {
         const isArchivedTarget = detail.toPath && settings.archivedPaths.includes(detail.toPath);
         const targetContainer = document.querySelector(`.simple-navigator-tree [data-folder-path="${detail.toPath}"]`);
         let orderedNames;
+        const itemNames = movedItems.map((m) => m.file.name);
         if (targetContainer) {
           orderedNames = [];
           for (let i = 0; i < targetContainer.children.length; i++) {
@@ -5507,24 +5557,24 @@ function instance2($$self, $$props, $$invalidate) {
             }
           }
           if (detail.newIndex >= 0 && !isArchivedTarget) {
-            const itemName = file.name;
-            const idx = orderedNames.indexOf(itemName);
-            if (idx >= 0) {
-              orderedNames.splice(idx, 1);
+            for (const name of itemNames) {
+              const idx = orderedNames.indexOf(name);
+              if (idx >= 0)
+                orderedNames.splice(idx, 1);
             }
             const safeIndex = Math.min(detail.newIndex, orderedNames.length);
-            orderedNames.splice(safeIndex, 0, itemName);
+            orderedNames.splice(safeIndex, 0, ...itemNames);
           }
         } else {
           orderedNames = ((targetFolder === null || targetFolder === void 0 ? void 0 : targetFolder.children) || []).map((c) => c.name);
           if (detail.newIndex >= 0 && !isArchivedTarget) {
-            const itemName = file.name;
-            const idx = orderedNames.indexOf(itemName);
-            if (idx >= 0) {
-              orderedNames.splice(idx, 1);
+            for (const name of itemNames) {
+              const idx = orderedNames.indexOf(name);
+              if (idx >= 0)
+                orderedNames.splice(idx, 1);
             }
             const safeIndex = Math.min(detail.newIndex, orderedNames.length);
-            orderedNames.splice(safeIndex, 0, itemName);
+            orderedNames.splice(safeIndex, 0, ...itemNames);
           }
         }
         if (!isArchivedTarget) {

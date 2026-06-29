@@ -22,6 +22,7 @@
     oldIndex: number;
     newIndex: number;
     itemPath: string;
+    batchPaths?: string[];
   }) => void;
   export let onUpdateSettings: (s: PluginSettings) => Promise<void>;
 
@@ -645,6 +646,23 @@
     dragState.toPath = "";
     dragState.newIndex = -1;
 
+    const sameParentSelected = Array.from(selectedPaths).filter(p => {
+      const pp = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
+      return pp === fromPath;
+    });
+    const batchSet = new Set(sameParentSelected);
+    batchSet.add(itemPath);
+    if (batchSet.size >= 2) {
+      const domChildren = Array.from(container.children);
+      dragState.batchPaths = Array.from(batchSet).sort((a, b) => {
+        const aEl = domChildren.find(el => (el as HTMLElement).dataset.path === a);
+        const bEl = domChildren.find(el => (el as HTMLElement).dataset.path === b);
+        return aEl && bEl ? Array.from(domChildren).indexOf(aEl) - Array.from(domChildren).indexOf(bEl) : 0;
+      });
+    } else {
+      dragState.batchPaths = [];
+    }
+
     e.dataTransfer!.effectAllowed = "move";
     e.dataTransfer!.setData("text/plain", itemPath);
 
@@ -695,15 +713,17 @@
     const fromPath = dragState.fromPath;
     const itemPath = dragState.itemPath;
     const oldIndex = dragState.oldIndex;
+    const batchPaths = dragState.batchPaths.length > 0 ? dragState.batchPaths : undefined;
 
     if (dragState.targetFolder) {
-      onSortEnd({ fromPath, toPath: dragState.targetFolder, oldIndex, newIndex: -1, itemPath });
+      onSortEnd({ fromPath, toPath: dragState.targetFolder, oldIndex, newIndex: -1, itemPath, batchPaths });
     } else if (dragState.toPath !== "" || dragState.newIndex >= 0) {
-      onSortEnd({ fromPath, toPath: dragState.toPath, oldIndex, newIndex: dragState.newIndex, itemPath });
+      onSortEnd({ fromPath, toPath: dragState.toPath, oldIndex, newIndex: dragState.newIndex, itemPath, batchPaths });
     }
 
     dragState.itemPath = "";
     dragState.fromPath = "";
+    dragState.batchPaths = [];
   }
 
   function handleDragLeave(e: DragEvent) {
@@ -716,6 +736,7 @@
   function handleDragEnd(e: DragEvent) {
     destroyDropIndicator();
     document.body.classList.remove("sn-is-dragging");
+    dragState.batchPaths = [];
   }
 </script>
 

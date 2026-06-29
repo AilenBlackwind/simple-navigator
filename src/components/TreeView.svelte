@@ -112,12 +112,13 @@
     const fromPath = dragState.fromPath;
     const itemPath = dragState.itemPath;
     const oldIndex = dragState.oldIndex;
+    const batchPaths = dragState.batchPaths.length > 0 ? dragState.batchPaths : undefined;
 
     try {
       if (dragState.targetFolder) {
-        handleSortEnd({ fromPath, toPath: dragState.targetFolder, oldIndex, newIndex: -1, itemPath });
+        handleSortEnd({ fromPath, toPath: dragState.targetFolder, oldIndex, newIndex: -1, itemPath, batchPaths });
       } else if (dragState.toPath !== "" || dragState.newIndex >= 0) {
-        handleSortEnd({ fromPath, toPath: dragState.toPath, oldIndex, newIndex: dragState.newIndex, itemPath });
+        handleSortEnd({ fromPath, toPath: dragState.toPath, oldIndex, newIndex: dragState.newIndex, itemPath, batchPaths });
       }
     } catch (err) {
       console.error("ROOT DROP ERROR", err);
@@ -164,7 +165,10 @@
     oldIndex: number;
     newIndex: number;
     itemPath: string;
+    batchPaths?: string[];
   }) {
+    const items = detail.batchPaths && detail.batchPaths.length > 0 ? detail.batchPaths : [detail.itemPath];
+
     if (detail.fromPath === detail.toPath && detail.newIndex >= 0) {
       // Archived folders use alphabetical sort — skip orderMap
       if (detail.fromPath && settings.archivedPaths.includes(detail.fromPath)) return;
@@ -177,14 +181,9 @@
         return;
       }
 
-      const itemName = detail.itemPath.split("/").pop() || detail.itemPath;
+      const itemNames = items.map(p => p.split("/").pop() || p);
 
-      let adjustedNewIndex = detail.newIndex;
-      if (adjustedNewIndex > detail.oldIndex) {
-        adjustedNewIndex--;
-      }
-
-      const orderedNames: string[] = [];
+      let orderedNames: string[] = [];
       for (let i = 0; i < container.children.length; i++) {
         const child = container.children[i] as HTMLElement;
         const path = child.dataset.path;
@@ -194,10 +193,23 @@
         }
       }
 
-      const idx = orderedNames.indexOf(itemName);
-      if (idx >= 0) {
-        orderedNames.splice(idx, 1);
-        orderedNames.splice(adjustedNewIndex, 0, itemName);
+      if (items.length === 1) {
+        const itemName = itemNames[0];
+        let adjustedNewIndex = detail.newIndex;
+        if (adjustedNewIndex > detail.oldIndex) adjustedNewIndex--;
+        const idx = orderedNames.indexOf(itemName);
+        if (idx >= 0) {
+          orderedNames.splice(idx, 1);
+          orderedNames.splice(adjustedNewIndex, 0, itemName);
+        }
+      } else {
+        const preRemoveIndices = itemNames.map(name => orderedNames.indexOf(name)).filter(idx => idx >= 0);
+        const sortedDesc = [...preRemoveIndices].sort((a, b) => b - a);
+        for (const idx of sortedDesc) orderedNames.splice(idx, 1);
+        const numBeforeNew = preRemoveIndices.filter(idx => idx < detail.newIndex).length;
+        const adjustedNewIndex = Math.max(0, detail.newIndex - numBeforeNew);
+        const safeIndex = Math.min(adjustedNewIndex, orderedNames.length);
+        orderedNames.splice(safeIndex, 0, ...itemNames);
       }
 
       settings = {
@@ -209,37 +221,45 @@
       };
       await onUpdateSettings(settings);
     } else {
-      const file = app.vault.getAbstractFileByPath(detail.itemPath);
-      if (!file) return;
-
-      if (file instanceof TFolder && detail.toPath && (detail.toPath === detail.itemPath || detail.toPath.startsWith(detail.itemPath + "/"))) {
-        console.warn("Cannot move folder into itself or descendant", detail.itemPath, detail.toPath);
-        return;
-      }
-
-      const targetPath = detail.toPath
-        ? normalizePath(`${detail.toPath}/${file.name}`)
-        : file.name;
-
       const savedSettings = settings;
+      let currentSettings = settings;
+      const movedItems: { oldPath: string; newPath: string; file: TAbstractFile }[] = [];
 
       try {
-        const itemPathPrefix = detail.itemPath + "/";
-        app.workspace.iterateAllLeaves((leaf) => {
-          const leafPath = (leaf.view as any)?.file?.path;
-          if (leafPath && (leafPath === detail.itemPath || leafPath.startsWith(itemPathPrefix))) {
-            leaf.detach();
+        for (const itemPath of items) {
+          const file = app.vault.getAbstractFileByPath(itemPath);
+          if (!file) continue;
+
+          if (file instanceof TFolder && detail.toPath && (detail.toPath === itemPath || detail.toPath.startsWith(itemPath + "/"))) {
+            console.warn("Cannot move folder into itself or descendant", itemPath, detail.toPath);
+            continue;
           }
-        });
-        await app.fileManager.renameFile(file, targetPath);
-        settings = updatePathsOnMove(settings, detail.itemPath, targetPath);
+
+          const targetPath = detail.toPath
+            ? normalizePath(`${detail.toPath}/${file.name}`)
+            : file.name;
+
+          const itemPathPrefix = itemPath + "/";
+          app.workspace.iterateAllLeaves((leaf) => {
+            const leafPath = (leaf.view as any)?.file?.path;
+            if (leafPath && (leafPath === itemPath || leafPath.startsWith(itemPathPrefix))) {
+              leaf.detach();
+            }
+          });
+
+          await app.fileManager.renameFile(file, targetPath);
+          currentSettings = updatePathsOnMove(currentSettings, itemPath, targetPath);
+          movedItems.push({ oldPath: itemPath, newPath: targetPath, file });
+        }
       } catch (e) {
+        const failedItem = movedItems.length > 0 ? movedItems[movedItems.length - 1] : null;
         console.error("Failed to move file:", e);
-        new Notice(`Cannot move "${file.name}": file is locked`);
+        new Notice(`Cannot move "${failedItem?.file?.name || items[0]}": file is locked`);
         settings = savedSettings;
         return;
       }
 
+      settings = currentSettings;
       const getFolder = (p: string) =>
         p === "" ? app.vault.getRoot() : (app.vault.getAbstractFileByPath(p) as TFolder | null);
       const sourceFolder = getFolder(detail.fromPath);
@@ -277,6 +297,8 @@
         `.simple-navigator-tree [data-folder-path="${detail.toPath}"]`
       ) as HTMLElement | null;
       let orderedNames: string[];
+      const itemNames = movedItems.map(m => m.file.name);
+
       if (targetContainer) {
         orderedNames = [];
         for (let i = 0; i < targetContainer.children.length; i++) {
@@ -288,24 +310,22 @@
           }
         }
         if (detail.newIndex >= 0 && !isArchivedTarget) {
-          const itemName = file.name;
-          const idx = orderedNames.indexOf(itemName);
-          if (idx >= 0) {
-            orderedNames.splice(idx, 1);
+          for (const name of itemNames) {
+            const idx = orderedNames.indexOf(name);
+            if (idx >= 0) orderedNames.splice(idx, 1);
           }
           const safeIndex = Math.min(detail.newIndex, orderedNames.length);
-          orderedNames.splice(safeIndex, 0, itemName);
+          orderedNames.splice(safeIndex, 0, ...itemNames);
         }
       } else {
         orderedNames = (targetFolder?.children || []).map((c) => c.name);
         if (detail.newIndex >= 0 && !isArchivedTarget) {
-          const itemName = file.name;
-          const idx = orderedNames.indexOf(itemName);
-          if (idx >= 0) {
-            orderedNames.splice(idx, 1);
+          for (const name of itemNames) {
+            const idx = orderedNames.indexOf(name);
+            if (idx >= 0) orderedNames.splice(idx, 1);
           }
           const safeIndex = Math.min(detail.newIndex, orderedNames.length);
-          orderedNames.splice(safeIndex, 0, itemName);
+          orderedNames.splice(safeIndex, 0, ...itemNames);
         }
       }
       if (!isArchivedTarget) {

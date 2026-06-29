@@ -8,6 +8,7 @@ export const dragState: {
   toPath: string;
   newIndex: number;
   lastDropTime: number;
+  batchPaths: string[];
 } = {
   fromPath: "",
   itemPath: "",
@@ -16,6 +17,7 @@ export const dragState: {
   toPath: "",
   newIndex: -1,
   lastDropTime: 0,
+  batchPaths: [],
 };
 
 let dropIndicatorEl: HTMLDivElement | null = null;
@@ -129,7 +131,7 @@ export function removeDropIndicator() {
 
 export function destroyDropIndicator() {
   stopDragScroll();
-  clearFolderHighlight();
+  clearFolderHighlight(true);
   hideGuideLineAnim();
   if (guideLineAnimEl) {
     guideLineAnimEl.remove();
@@ -230,7 +232,7 @@ export function resolveDropTarget(x: number, y: number): DropTarget | null {
       const ccGapRect = container.getBoundingClientRect();
       if (y > ccGapRect.top + EDGE && y < ccGapRect.bottom - EDGE) {
         const folderEl = container.closest(".nav-folder") as HTMLElement;
-        if (folderEl && folderEl.dataset.path && folderEl.dataset.path !== dragState.itemPath) {
+        if (folderEl && folderEl.dataset.path && folderEl.dataset.path !== dragState.itemPath && !dragState.batchPaths.includes(folderEl.dataset.path)) {
           return { itemEl: folderEl, containerPath, newIndex: -1, targetFolder: containerPath };
         }
       }
@@ -296,7 +298,7 @@ export function resolveDropTarget(x: number, y: number): DropTarget | null {
         return { itemEl: child, containerPath, newIndex: i + 1, targetFolder: null };
       }
       const ccFolderEl = container.closest(".nav-folder") as HTMLElement;
-        if (ccFolderEl && ccFolderEl.dataset.path && ccFolderEl.dataset.path !== dragState.itemPath) {
+        if (ccFolderEl && ccFolderEl.dataset.path && ccFolderEl.dataset.path !== dragState.itemPath && !dragState.batchPaths.includes(ccFolderEl.dataset.path)) {
           return { itemEl: ccFolderEl, containerPath, newIndex: -1, targetFolder: containerPath };
         }
         return { itemEl: child, containerPath, newIndex: i, targetFolder: null };
@@ -316,14 +318,14 @@ export function resolveDropTarget(x: number, y: number): DropTarget | null {
     }
   }
 
-  if (!nearEdge2) {
-    const folderEl = container.closest(".nav-folder") as HTMLElement;
-    // Only a real nested folder (with a path) can be a drop target — never the
-    // root tree, which has no data-path and would break the indicator geometry.
-    if (folderEl && folderEl.dataset.path && folderEl.dataset.path !== dragState.itemPath) {
-      return { itemEl: folderEl, containerPath, newIndex: -1, targetFolder: containerPath };
+    if (!nearEdge2) {
+      const folderEl = container.closest(".nav-folder") as HTMLElement;
+      // Only a real nested folder (with a path) can be a drop target — never the
+      // root tree, which has no data-path and would break the indicator geometry.
+      if (folderEl && folderEl.dataset.path && folderEl.dataset.path !== dragState.itemPath && !dragState.batchPaths.includes(folderEl.dataset.path)) {
+        return { itemEl: folderEl, containerPath, newIndex: -1, targetFolder: containerPath };
+      }
     }
-  }
   return { itemEl: children.length > 0 ? children[children.length - 1] : null, containerPath, newIndex: children.length, targetFolder: null };
 }
 
