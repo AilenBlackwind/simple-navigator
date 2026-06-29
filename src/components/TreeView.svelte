@@ -56,8 +56,8 @@
       selectedPaths = new Set(selectedPaths);
     } else {
       selectedPaths = new Set([path]);
+      lastClickedPath = path;
     }
-    lastClickedPath = path;
   }
 
   function clearSelection() {
