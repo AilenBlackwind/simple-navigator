@@ -1,10 +1,11 @@
-import { Plugin, WorkspaceLeaf, TFolder } from "obsidian";
+import { Plugin, WorkspaceLeaf, TFolder, TAbstractFile } from "obsidian";
 import { SIMPLE_NAVIGATOR_VIEW, SimpleNavigatorView } from "./SimpleNavigatorView";
 import { PluginSettings, DEFAULT_SETTINGS, SimpleNavigatorSettingTab } from "./settings";
 import { refreshCustomIcons } from "./modal";
 
 export default class SimpleNavigatorPlugin extends Plugin {
   settings!: PluginSettings;
+  lastClicked: TAbstractFile | null = null;
 
   async onload() {
     const rawData = await this.loadData() as Record<string, unknown> | null;

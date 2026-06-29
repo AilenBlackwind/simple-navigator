@@ -4337,6 +4337,7 @@ function instance($$self, $$props, $$invalidate) {
         const path = app.vault.getAvailablePath(folder.path + "/New folder", "");
         yield app.vault.createFolder(path);
       })));
+      const pluginInstance2 = () => app.plugins.plugins["simple-navigator"];
       if (settings.newMenuCommands && settings.newMenuCommands.length > 0) {
         menu.addItem((item) => {
           item.setTitle("New...").setIcon("plus-circle");
@@ -4349,6 +4350,9 @@ function instance($$self, $$props, $$invalidate) {
               if (cmd.icon)
                 s.setIcon(cmd.icon);
               s.onClick(() => {
+                const p = pluginInstance2();
+                if (p)
+                  p.lastClicked = file;
                 app.commands.executeCommandById(cmd.commandId);
               });
             });
@@ -4591,6 +4595,9 @@ function instance($$self, $$props, $$invalidate) {
             if (cmd.icon)
               s.setIcon(cmd.icon);
             s.onClick(() => {
+              const p = pluginInstance();
+              if (p)
+                p.lastClicked = file;
               app.commands.executeCommandById(cmd.commandId);
             });
           });
@@ -4607,6 +4614,9 @@ function instance($$self, $$props, $$invalidate) {
           if (cmd.icon)
             s.setIcon(cmd.icon);
           s.onClick(() => {
+            const p = pluginInstance();
+            if (p)
+              p.lastClicked = file;
             app.commands.executeCommandById(cmd.commandId);
           });
         });
@@ -5552,6 +5562,9 @@ function instance2($$self, $$props, $$invalidate) {
             if (cmd.icon)
               s.setIcon(cmd.icon);
             s.onClick(() => {
+              const p = app.plugins.plugins["simple-navigator"];
+              if (p)
+                p.lastClicked = null;
               app.commands.executeCommandById(cmd.commandId);
             });
           });
@@ -5572,6 +5585,9 @@ function instance2($$self, $$props, $$invalidate) {
             if (cmd.icon)
               s.setIcon(cmd.icon);
             s.onClick(() => {
+              const p = app.plugins.plugins["simple-navigator"];
+              if (p)
+                p.lastClicked = null;
               app.commands.executeCommandById(cmd.commandId);
             });
           });
@@ -5588,6 +5604,9 @@ function instance2($$self, $$props, $$invalidate) {
           if (cmd.icon)
             s.setIcon(cmd.icon);
           s.onClick(() => {
+            const p = app.plugins.plugins["simple-navigator"];
+            if (p)
+              p.lastClicked = null;
             app.commands.executeCommandById(cmd.commandId);
           });
         });
@@ -6289,6 +6308,10 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
 
 // src/main.ts
 var SimpleNavigatorPlugin = class extends import_obsidian7.Plugin {
+  constructor() {
+    super(...arguments);
+    this.lastClicked = null;
+  }
   async onload() {
     const rawData = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, rawData);

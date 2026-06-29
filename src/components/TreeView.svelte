@@ -347,6 +347,8 @@
             s.setTitle(cmd.label);
             if (cmd.icon) s.setIcon(cmd.icon);
             s.onClick(() => {
+              const p = (app as any).plugins.plugins['simple-navigator'];
+              if (p) p.lastClicked = null;
               app.commands.executeCommandById(cmd.commandId);
             });
           });
@@ -364,6 +366,8 @@
             s.setTitle(cmd.label);
             if (cmd.icon) s.setIcon(cmd.icon);
             s.onClick(() => {
+              const p = (app as any).plugins.plugins['simple-navigator'];
+              if (p) p.lastClicked = null;
               app.commands.executeCommandById(cmd.commandId);
             });
           });
@@ -379,6 +383,8 @@
           s.setTitle(cmd.label);
           if (cmd.icon) s.setIcon(cmd.icon);
           s.onClick(() => {
+            const p = (app as any).plugins.plugins['simple-navigator'];
+            if (p) p.lastClicked = null;
             app.commands.executeCommandById(cmd.commandId);
           });
         });

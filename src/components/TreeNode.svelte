@@ -271,6 +271,7 @@
             await app.vault.createFolder(path);
           })
       );
+      const pluginInstance = () => (app as any).plugins.plugins['simple-navigator'];
       if (settings.newMenuCommands && settings.newMenuCommands.length > 0) {
         menu.addItem((item) => {
           item.setTitle("New...").setIcon("plus-circle");
@@ -281,6 +282,8 @@
               s.setTitle(cmd.label);
               if (cmd.icon) s.setIcon(cmd.icon);
               s.onClick(() => {
+                const p = pluginInstance();
+                if (p) p.lastClicked = file;
                 app.commands.executeCommandById(cmd.commandId);
               });
             });
@@ -592,6 +595,8 @@
             s.setTitle(cmd.label);
             if (cmd.icon) s.setIcon(cmd.icon);
             s.onClick(() => {
+              const p = pluginInstance();
+              if (p) p.lastClicked = file;
               app.commands.executeCommandById(cmd.commandId);
             });
           });
@@ -607,6 +612,8 @@
           s.setTitle(cmd.label);
           if (cmd.icon) s.setIcon(cmd.icon);
           s.onClick(() => {
+            const p = pluginInstance();
+            if (p) p.lastClicked = file;
             app.commands.executeCommandById(cmd.commandId);
           });
         });
