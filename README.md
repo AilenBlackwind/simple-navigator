@@ -69,6 +69,61 @@ src/
     TreeNode.svelte       Recursive node: click, rename, context menu, DnD
 ```
 
+## API for plugin developers
+
+Other plugins can access Simple Navigator internals via
+`app.plugins.plugins["simple-navigator"]` (the plugin instance).
+
+### `plugin.lastClicked: TAbstractFile | null`
+
+The last file or folder that was right-clicked (or left-clicked) in the navigator
+tree. Useful for Quick Add / Templater scripts that need to know which item the
+user interacted with.
+
+```js
+const plugin = app.plugins.plugins["simple-navigator"];
+const target = plugin.lastClicked || app.workspace.getActiveFile();
+```
+
+### `plugin.getSortedChildren(folderPath: string): SortedChild[]`
+
+Returns a folder's children sorted by the user's drag-and-drop order (or
+alphabetically if the folder was never reordered). Hidden and archived items are
+filtered out. Works for any folder, even if it has never been touched by the
+plugin — no prior setup required.
+
+```ts
+interface SortedChild {
+  name: string;   // "MyFile.md"
+  path: string;   // "Parent/MyFile.md"
+  type: "file" | "folder";
+}
+```
+
+Usage example — recursive tree walk:
+
+```js
+const plugin = app.plugins.plugins["simple-navigator"];
+function walk(path, depth) {
+  for (const child of plugin.getSortedChildren(path)) {
+    console.log("  ".repeat(depth) + child.name);
+    if (child.type === "folder") walk(child.path, depth + 1);
+  }
+}
+walk("", 0);
+```
+
+### `plugin.settings: PluginSettings`
+
+The full settings object (read-only). Useful for checking `hiddenPaths`,
+`archivedPaths`, `colorMap`, `iconMap`, etc. Refer to the `PluginSettings`
+interface in `src/settings.ts` for the complete shape.
+
+```js
+const plugin = app.plugins.plugins["simple-navigator"];
+const isHidden = plugin.settings.hiddenPaths.includes(target.path);
+```
+
 ## Notes
 
 - This is developed and tested against a single personal workflow. Expect rough
