@@ -1,36 +1,6 @@
-import { App, FuzzySuggestModal, FuzzyMatch, Command, TFolder, TFile, Modal, setIcon } from "obsidian";
+import { App, FuzzySuggestModal, FuzzyMatch, Command, TFolder, TFile } from "obsidian";
 import { ICON_LIST } from "./generated/icon-list";
-import { CUSTOM_ICON_PREFIX, customSvgContent, setCustomIcon } from "./utils";
-
-let cachedCustomItems: string[] = [];
-
-export async function refreshCustomIcons(app: App, folderPath: string) {
-  cachedCustomItems = [];
-  customSvgContent.clear();
-  if (!folderPath) return;
-  try {
-    const adapter = app.vault.adapter;
-    const exists = await adapter.exists(folderPath);
-    if (!exists) return;
-
-    const walk = async (dir: string) => {
-      const entries = await adapter.list(dir);
-      for (const filePath of entries.files) {
-        if (filePath.toLowerCase().endsWith(".svg")) {
-          const svg = await adapter.read(filePath);
-          const key = `${CUSTOM_ICON_PREFIX}${filePath}`;
-          cachedCustomItems.push(key);
-          customSvgContent.set(key, svg);
-        }
-      }
-      for (const sub of entries.folders) {
-        await walk(sub);
-      }
-    };
-
-    await walk(folderPath);
-  } catch {}
-}
+import { CUSTOM_ICON_PREFIX, setCustomIcon, cachedCustomItems } from "./icon-utils";
 
 export class CommandSuggestModal extends FuzzySuggestModal<Command> {
   private onSelect: (command: Command) => void;
@@ -131,79 +101,5 @@ export class FolderSuggestModal extends FuzzySuggestModal<TFolder> {
 
   onChooseItem(folder: TFolder): void {
     this.onSelect(folder);
-  }
-}
-
-export function showConfirmModal(
-  app: App,
-  title: string,
-  description: string | DocumentFragment,
-  confirmText?: string
-): Promise<boolean> {
-  return new Promise((resolve) => {
-    const modal = new ConfirmModal(app, title, description, confirmText || "Delete", resolve);
-    modal.open();
-  });
-}
-
-export class ConfirmModal extends Modal {
-  private titleText: string;
-  private desc: string | DocumentFragment;
-  private confirmText: string;
-  private resolve: (value: boolean) => void;
-
-  constructor(
-    app: App,
-    titleText: string,
-    desc: string | DocumentFragment,
-    confirmText: string,
-    resolve: (value: boolean) => void
-  ) {
-    super(app);
-    this.titleText = titleText;
-    this.desc = desc;
-    this.confirmText = confirmText;
-    this.resolve = resolve;
-  }
-
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.empty();
-
-    const headerDiv = contentEl.createDiv({ cls: "modal-header" });
-    const iconEl = headerDiv.createSpan();
-    setIcon(iconEl, "trash-2");
-    iconEl.style.marginRight = "8px";
-    iconEl.style.color = "var(--color-red)";
-    headerDiv.createEl("h2", { text: this.titleText });
-
-    if (typeof this.desc === "string") {
-      contentEl.createEl("p", { text: this.desc });
-    } else {
-      contentEl.appendChild(this.desc);
-    }
-
-    const buttonDiv = contentEl.createDiv({ cls: "modal-button-container" });
-    buttonDiv.style.display = "flex";
-    buttonDiv.style.justifyContent = "flex-end";
-    buttonDiv.style.gap = "8px";
-    buttonDiv.style.marginTop = "24px";
-
-    const cancelBtn = buttonDiv.createEl("button", { text: "Cancel" });
-    cancelBtn.onclick = () => this.close();
-
-    const deleteBtn = buttonDiv.createEl("button", {
-      text: this.confirmText,
-      cls: "mod-warning",
-    });
-    deleteBtn.onclick = () => {
-      this.resolve(true);
-      this.close();
-    };
-  }
-
-  onClose() {
-    this.contentEl.empty();
-    this.resolve(false);
   }
 }

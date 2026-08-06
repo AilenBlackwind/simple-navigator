@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { App, TFolder, EventRef, TFile, Menu, Notice } from "obsidian";
+  import { App, TFolder, EventRef, TFile, Menu, Notice, normalizePath } from "obsidian";
   import { onMount, onDestroy } from "svelte";
   import TreeNode from "./TreeNode.svelte";
   import { sortWithOrder, deleteFile } from "../utils";
   import { dragState, createDropIndicator, updateDropIndicator, removeDropIndicator, destroyDropIndicator, clearFolderHighlight, highlightFolder, resolveDropTarget, updatePathsOnMove, updateAutoScroll, DROP_ZONE_BUFFER } from "../drag-state";
   import type { PluginSettings } from "../settings";
-  import { showConfirmModal } from "../modal";
+  import { showConfirmModal } from "../confirm-modal";
 
   export let app: App;
   export let rootFolder: TFolder;
@@ -13,6 +13,12 @@
   export let showHidden: boolean = false;
   export let refreshKey: number = 0;
   export let onUpdateSettings: (s: PluginSettings) => Promise<void>;
+  export let registerDomEvent: (
+    el: HTMLElement | Window | Document,
+    event: string,
+    callback: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions
+  ) => void;
 
   let activeFilePath = "";
   let activeLeafRef: EventRef;
@@ -49,9 +55,8 @@
       }
       selectedPaths = new Set(selectedPaths);
     } else {
-      selectedPaths = new Set([path]);
+      lastClickedPath = path;
     }
-    lastClickedPath = path;
   }
 
   function clearSelection() {
@@ -107,12 +112,13 @@
     const fromPath = dragState.fromPath;
     const itemPath = dragState.itemPath;
     const oldIndex = dragState.oldIndex;
+    const batchPaths = dragState.batchPaths.length > 0 ? dragState.batchPaths : undefined;
 
     try {
       if (dragState.targetFolder) {
-        handleSortEnd({ fromPath, toPath: dragState.targetFolder, oldIndex, newIndex: -1, itemPath });
+        handleSortEnd({ fromPath, toPath: dragState.targetFolder, oldIndex, newIndex: -1, itemPath, batchPaths });
       } else if (dragState.toPath !== "" || dragState.newIndex >= 0) {
-        handleSortEnd({ fromPath, toPath: dragState.toPath, oldIndex, newIndex: dragState.newIndex, itemPath });
+        handleSortEnd({ fromPath, toPath: dragState.toPath, oldIndex, newIndex: dragState.newIndex, itemPath, batchPaths });
       }
     } catch (err) {
       console.error("ROOT DROP ERROR", err);
@@ -159,7 +165,10 @@
     oldIndex: number;
     newIndex: number;
     itemPath: string;
+    batchPaths?: string[];
   }) {
+    const items = detail.batchPaths && detail.batchPaths.length > 0 ? detail.batchPaths : [detail.itemPath];
+
     if (detail.fromPath === detail.toPath && detail.newIndex >= 0) {
       // Archived folders use alphabetical sort — skip orderMap
       if (detail.fromPath && settings.archivedPaths.includes(detail.fromPath)) return;
@@ -172,14 +181,9 @@
         return;
       }
 
-      const itemName = detail.itemPath.split("/").pop() || detail.itemPath;
+      const itemNames = items.map(p => p.split("/").pop() || p);
 
-      let adjustedNewIndex = detail.newIndex;
-      if (adjustedNewIndex > detail.oldIndex) {
-        adjustedNewIndex--;
-      }
-
-      const orderedNames: string[] = [];
+      let orderedNames: string[] = [];
       for (let i = 0; i < container.children.length; i++) {
         const child = container.children[i] as HTMLElement;
         const path = child.dataset.path;
@@ -189,10 +193,23 @@
         }
       }
 
-      const idx = orderedNames.indexOf(itemName);
-      if (idx >= 0) {
-        orderedNames.splice(idx, 1);
-        orderedNames.splice(adjustedNewIndex, 0, itemName);
+      if (items.length === 1) {
+        const itemName = itemNames[0];
+        let adjustedNewIndex = detail.newIndex;
+        if (adjustedNewIndex > detail.oldIndex) adjustedNewIndex--;
+        const idx = orderedNames.indexOf(itemName);
+        if (idx >= 0) {
+          orderedNames.splice(idx, 1);
+          orderedNames.splice(adjustedNewIndex, 0, itemName);
+        }
+      } else {
+        const preRemoveIndices = itemNames.map(name => orderedNames.indexOf(name)).filter(idx => idx >= 0);
+        const sortedDesc = [...preRemoveIndices].sort((a, b) => b - a);
+        for (const idx of sortedDesc) orderedNames.splice(idx, 1);
+        const numBeforeNew = preRemoveIndices.filter(idx => idx < detail.newIndex).length;
+        const adjustedNewIndex = Math.max(0, detail.newIndex - numBeforeNew);
+        const safeIndex = Math.min(adjustedNewIndex, orderedNames.length);
+        orderedNames.splice(safeIndex, 0, ...itemNames);
       }
 
       settings = {
@@ -204,37 +221,45 @@
       };
       await onUpdateSettings(settings);
     } else {
-      const file = app.vault.getAbstractFileByPath(detail.itemPath);
-      if (!file) return;
-
-      if (file instanceof TFolder && detail.toPath && (detail.toPath === detail.itemPath || detail.toPath.startsWith(detail.itemPath + "/"))) {
-        console.warn("Cannot move folder into itself or descendant", detail.itemPath, detail.toPath);
-        return;
-      }
-
-      const targetPath = detail.toPath
-        ? `${detail.toPath}/${file.name}`
-        : file.name;
-
       const savedSettings = settings;
+      let currentSettings = settings;
+      const movedItems: { oldPath: string; newPath: string; file: TAbstractFile }[] = [];
 
       try {
-        const itemPathPrefix = detail.itemPath + "/";
-        app.workspace.iterateAllLeaves((leaf) => {
-          const leafPath = (leaf.view as any)?.file?.path;
-          if (leafPath && (leafPath === detail.itemPath || leafPath.startsWith(itemPathPrefix))) {
-            leaf.detach();
+        for (const itemPath of items) {
+          const file = app.vault.getAbstractFileByPath(itemPath);
+          if (!file) continue;
+
+          if (file instanceof TFolder && detail.toPath && (detail.toPath === itemPath || detail.toPath.startsWith(itemPath + "/"))) {
+            console.warn("Cannot move folder into itself or descendant", itemPath, detail.toPath);
+            continue;
           }
-        });
-        await app.fileManager.renameFile(file, targetPath);
-        settings = updatePathsOnMove(settings, detail.itemPath, targetPath);
+
+          const targetPath = detail.toPath
+            ? normalizePath(`${detail.toPath}/${file.name}`)
+            : file.name;
+
+          const itemPathPrefix = itemPath + "/";
+          app.workspace.iterateAllLeaves((leaf) => {
+            const leafPath = (leaf.view as any)?.file?.path;
+            if (leafPath && (leafPath === itemPath || leafPath.startsWith(itemPathPrefix))) {
+              leaf.detach();
+            }
+          });
+
+          await app.fileManager.renameFile(file, targetPath);
+          currentSettings = updatePathsOnMove(currentSettings, itemPath, targetPath);
+          movedItems.push({ oldPath: itemPath, newPath: targetPath, file });
+        }
       } catch (e) {
+        const failedItem = movedItems.length > 0 ? movedItems[movedItems.length - 1] : null;
         console.error("Failed to move file:", e);
-        new Notice(`Cannot move "${file.name}": file is locked`);
+        new Notice(`Cannot move "${failedItem?.file?.name || items[0]}": file is locked`);
         settings = savedSettings;
         return;
       }
 
+      settings = currentSettings;
       const getFolder = (p: string) =>
         p === "" ? app.vault.getRoot() : (app.vault.getAbstractFileByPath(p) as TFolder | null);
       const sourceFolder = getFolder(detail.fromPath);
@@ -272,6 +297,8 @@
         `.simple-navigator-tree [data-folder-path="${detail.toPath}"]`
       ) as HTMLElement | null;
       let orderedNames: string[];
+      const itemNames = movedItems.map(m => m.file.name);
+
       if (targetContainer) {
         orderedNames = [];
         for (let i = 0; i < targetContainer.children.length; i++) {
@@ -283,24 +310,22 @@
           }
         }
         if (detail.newIndex >= 0 && !isArchivedTarget) {
-          const itemName = file.name;
-          const idx = orderedNames.indexOf(itemName);
-          if (idx >= 0) {
-            orderedNames.splice(idx, 1);
+          for (const name of itemNames) {
+            const idx = orderedNames.indexOf(name);
+            if (idx >= 0) orderedNames.splice(idx, 1);
           }
           const safeIndex = Math.min(detail.newIndex, orderedNames.length);
-          orderedNames.splice(safeIndex, 0, itemName);
+          orderedNames.splice(safeIndex, 0, ...itemNames);
         }
       } else {
         orderedNames = (targetFolder?.children || []).map((c) => c.name);
         if (detail.newIndex >= 0 && !isArchivedTarget) {
-          const itemName = file.name;
-          const idx = orderedNames.indexOf(itemName);
-          if (idx >= 0) {
-            orderedNames.splice(idx, 1);
+          for (const name of itemNames) {
+            const idx = orderedNames.indexOf(name);
+            if (idx >= 0) orderedNames.splice(idx, 1);
           }
           const safeIndex = Math.min(detail.newIndex, orderedNames.length);
-          orderedNames.splice(safeIndex, 0, itemName);
+          orderedNames.splice(safeIndex, 0, ...itemNames);
         }
       }
       if (!isArchivedTarget) {
@@ -320,7 +345,9 @@
         .setTitle("New note")
         .setIcon("file-plus")
         .onClick(async () => {
-          const path = app.vault.getAvailablePath("Untitled", "md");
+          const parent = app.fileManager.getNewFileParent("");
+          const basePath = parent.path ? normalizePath(`${parent.path}/Untitled`) : "Untitled";
+          const path = app.vault.getAvailablePath(basePath, "md");
           await app.vault.create(path, "");
           const f = app.vault.getAbstractFileByPath(path);
           if (f instanceof TFile) {
@@ -333,7 +360,9 @@
         .setTitle("New folder")
         .setIcon("folder-plus")
         .onClick(async () => {
-          const path = app.vault.getAvailablePath("New folder", "");
+          const parent = app.fileManager.getNewFileParent("");
+          const basePath = parent.path ? normalizePath(`${parent.path}/New folder`) : "New folder";
+          const path = app.vault.getAvailablePath(basePath, "");
           await app.vault.createFolder(path);
         })
     );
@@ -347,38 +376,50 @@
             s.setTitle(cmd.label);
             if (cmd.icon) s.setIcon(cmd.icon);
             s.onClick(() => {
+              const p = (app as any).plugins.plugins['simple-navigator'];
+              if (p) p.lastClicked = null;
               app.commands.executeCommandById(cmd.commandId);
             });
           });
         }
       });
     }
-    for (const [sectionName, entries] of Object.entries(settings.submenus)) {
-      if (entries.length === 0) continue;
-      menu.addItem((item) => {
-        item.setTitle(sectionName).setIcon("terminal");
-        const sub = item.setSubmenu();
-        for (const cmd of entries) {
-          if (!cmd.commandId) continue;
-          sub.addItem((s) => {
-            s.setTitle(cmd.label);
-            if (cmd.icon) s.setIcon(cmd.icon);
-            s.onClick(() => {
-              app.commands.executeCommandById(cmd.commandId);
+    const submenuEntries = Object.entries(settings.submenus).filter(([, e]) => e.length > 0);
+    if (submenuEntries.length > 0) {
+      menu.addSeparator();
+      for (const [sectionName, entries] of submenuEntries) {
+        menu.addItem((item) => {
+          item.setTitle(sectionName);
+          const icon = settings.submenuIcons?.[sectionName];
+          if (icon) item.setIcon(icon);
+          const sub = item.setSubmenu();
+          for (const cmd of entries) {
+            if (cmd.isSeparator) { sub.addSeparator(); continue; }
+            if (!cmd.commandId) continue;
+            sub.addItem((s) => {
+              s.setTitle(cmd.label);
+              if (cmd.icon) s.setIcon(cmd.icon);
+              s.onClick(() => {
+                const p = (app as any).plugins.plugins['simple-navigator'];
+                if (p) p.lastClicked = null;
+                app.commands.executeCommandById(cmd.commandId);
+              });
             });
-          });
-        }
-      });
+          }
+        });
+      }
+      menu.addSeparator();
     }
 
     if (settings.mainMenuCommands.length > 0) {
-      menu.addSeparator();
       for (const cmd of settings.mainMenuCommands) {
         if (!cmd.commandId) continue;
         menu.addItem((s) => {
           s.setTitle(cmd.label);
           if (cmd.icon) s.setIcon(cmd.icon);
           s.onClick(() => {
+            const p = (app as any).plugins.plugins['simple-navigator'];
+            if (p) p.lastClicked = null;
             app.commands.executeCommandById(cmd.commandId);
           });
         });
@@ -433,16 +474,16 @@
         })();
       }
     };
-    document.addEventListener("keydown", keydownHandler);
+    registerDomEvent(document, "keydown", keydownHandler);
     rootContextHandler = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       if (!target.closest(".simple-navigator-tree")) return;
       if (target.closest(".nav-folder-title, .nav-file-title")) return;
       handleRootContextMenu(e);
     };
-    document.addEventListener("contextmenu", rootContextHandler);
-    window.addEventListener("dragover", handleWindowDragOver, true);
-    window.addEventListener("drop", handleWindowDrop, true);
+    registerDomEvent(document, "contextmenu", rootContextHandler);
+    registerDomEvent(window, "dragover", handleWindowDragOver, true);
+    registerDomEvent(window, "drop", handleWindowDrop, true);
   });
 
   onDestroy(() => {
@@ -457,17 +498,23 @@
     if (rootContextHandler) {
       document.removeEventListener("contextmenu", rootContextHandler);
     }
+    destroyDropIndicator();
+    document.body.classList.remove("sn-is-dragging");
+    dragState.fromPath = "";
+    dragState.itemPath = "";
+    dragState.batchPaths = [];
+    dragState.targetFolder = null;
+    dragState.toPath = "";
   });
 </script>
 
 <div
   class="simple-navigator-tree nav-folder mod-root"
-  on:click|self={clearSelection}
   on:dragover|preventDefault={handleRootDragOver}
   on:drop={handleRootDrop}
   on:dragleave={handleRootDragLeave}
 >
-  <div class="nav-folder-children" data-folder-path="">
+  <div class="nav-folder-children" data-folder-path="" on:click|self={clearSelection}>
     {#each children as child (child.path)}
       <TreeNode
         {app}

@@ -7,6 +7,9 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
@@ -25,16 +28,109 @@ var __publicField = (obj, key, value) => {
   return value;
 };
 
+// src/icon-utils.ts
+var icon_utils_exports = {};
+__export(icon_utils_exports, {
+  CUSTOM_ICON_PREFIX: () => CUSTOM_ICON_PREFIX,
+  cachedCustomItems: () => cachedCustomItems,
+  clearIconCache: () => clearIconCache,
+  customSvgContent: () => customSvgContent,
+  isCustomIcon: () => isCustomIcon,
+  refreshCustomIcons: () => refreshCustomIcons,
+  setCustomIcon: () => setCustomIcon
+});
+function clearIconCache() {
+  cachedCustomItems = [];
+  customSvgContent.clear();
+}
+async function refreshCustomIcons(app, folderPath) {
+  cachedCustomItems = [];
+  customSvgContent.clear();
+  if (!folderPath)
+    return;
+  try {
+    const adapter = app.vault.adapter;
+    const exists = await adapter.exists(folderPath);
+    if (!exists)
+      return;
+    const walk = async (dir) => {
+      if (cachedCustomItems.length >= MAX_CACHED_ICONS)
+        return;
+      const entries = await adapter.list(dir);
+      for (const filePath of entries.files) {
+        if (cachedCustomItems.length >= MAX_CACHED_ICONS)
+          return;
+        if (filePath.toLowerCase().endsWith(".svg")) {
+          const stat = await adapter.stat(filePath);
+          if (stat && stat.size > MAX_SVG_SIZE_BYTES)
+            continue;
+          const svg = await adapter.read(filePath);
+          const key = `${CUSTOM_ICON_PREFIX}${filePath}`;
+          cachedCustomItems.push(key);
+          customSvgContent.set(key, svg);
+        }
+      }
+      for (const sub of entries.folders) {
+        if (cachedCustomItems.length >= MAX_CACHED_ICONS)
+          return;
+        await walk(sub);
+      }
+    };
+    await walk(folderPath);
+  } catch (e) {
+  }
+}
+function isCustomIcon(value) {
+  return value.startsWith(CUSTOM_ICON_PREFIX);
+}
+function setCustomIcon(el, value, app) {
+  try {
+    el.innerHTML = "";
+    if (isCustomIcon(value)) {
+      const svg = customSvgContent.get(value);
+      if (svg) {
+        el.innerHTML = svg;
+        const svgEl2 = el.querySelector("svg");
+        if (svgEl2) {
+          svgEl2.style.width = "16px";
+          svgEl2.style.height = "16px";
+        }
+        return;
+      }
+    }
+    el.style.display = "";
+    (0, import_obsidian2.setIcon)(el, value);
+    const svgEl = el.querySelector("svg");
+    if (svgEl) {
+      svgEl.style.width = "16px";
+      svgEl.style.height = "16px";
+      svgEl.style.strokeWidth = "2px";
+    }
+  } catch (e) {
+  }
+}
+var import_obsidian2, CUSTOM_ICON_PREFIX, customSvgContent, cachedCustomItems, MAX_CACHED_ICONS, MAX_SVG_SIZE_BYTES;
+var init_icon_utils = __esm({
+  "src/icon-utils.ts"() {
+    import_obsidian2 = require("obsidian");
+    CUSTOM_ICON_PREFIX = "svg::";
+    customSvgContent = /* @__PURE__ */ new Map();
+    cachedCustomItems = [];
+    MAX_CACHED_ICONS = 500;
+    MAX_SVG_SIZE_BYTES = 65536;
+  }
+});
+
 // src/main.ts
 var main_exports = {};
 __export(main_exports, {
   default: () => SimpleNavigatorPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian7 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 
 // src/SimpleNavigatorView.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // node_modules/svelte/src/runtime/internal/utils.js
 function noop() {
@@ -832,10 +928,10 @@ function __awaiter(thisArg, _arguments, P, generator) {
 }
 
 // src/components/TreeView.svelte
-var import_obsidian4 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 
 // src/components/TreeNode.svelte
-var import_obsidian3 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/utils.ts
 var import_obsidian = require("obsidian");
@@ -911,16 +1007,17 @@ function getFileIcon(name) {
   };
   return (_a = iconMap[ext]) != null ? _a : "file";
 }
+function cleanUpSettings(settings, vault) {
+  for (const path of settings.archivedPaths) {
+    delete settings.orderMap[path];
+  }
+  return settings;
+}
 function getVisibleExtSet(extensionsStr) {
   if (!extensionsStr || !extensionsStr.trim())
     return null;
   const exts = extensionsStr.split(",").map((s) => s.trim().toLowerCase().replace(/^\./, "")).filter((s) => s.length > 0);
   return exts.length > 0 ? new Set(exts) : null;
-}
-var CUSTOM_ICON_PREFIX = "svg::";
-var customSvgContent = /* @__PURE__ */ new Map();
-function isCustomIcon(value) {
-  return value.startsWith(CUSTOM_ICON_PREFIX);
 }
 async function deleteFile(app, file) {
   const trashOption = app.vault.getConfig("trashOption");
@@ -930,34 +1027,12 @@ async function deleteFile(app, file) {
     await app.vault.trash(file, trashOption === "system");
   }
 }
-function setCustomIcon(el, value, app) {
-  try {
-    el.innerHTML = "";
-    if (isCustomIcon(value)) {
-      const svg = customSvgContent.get(value);
-      if (svg) {
-        el.innerHTML = svg;
-        const svgEl2 = el.querySelector("svg");
-        if (svgEl2) {
-          svgEl2.style.width = "16px";
-          svgEl2.style.height = "16px";
-        }
-        return;
-      }
-    }
-    el.style.display = "";
-    (0, import_obsidian.setIcon)(el, value);
-    const svgEl = el.querySelector("svg");
-    if (svgEl) {
-      svgEl.style.width = "16px";
-      svgEl.style.height = "16px";
-      svgEl.style.strokeWidth = "2px";
-    }
-  } catch (e) {
-  }
-}
+
+// src/components/TreeNode.svelte
+init_icon_utils();
 
 // src/drag-state.ts
+var import_obsidian3 = require("obsidian");
 var dragState = {
   fromPath: "",
   itemPath: "",
@@ -965,7 +1040,8 @@ var dragState = {
   targetFolder: null,
   toPath: "",
   newIndex: -1,
-  lastDropTime: 0
+  lastDropTime: 0,
+  batchPaths: []
 };
 var dropIndicatorEl = null;
 var _lastHighlightAt = 0;
@@ -1075,7 +1151,7 @@ function removeDropIndicator() {
 }
 function destroyDropIndicator() {
   stopDragScroll();
-  clearFolderHighlight();
+  clearFolderHighlight(true);
   hideGuideLineAnim();
   if (guideLineAnimEl) {
     guideLineAnimEl.remove();
@@ -1158,7 +1234,7 @@ function resolveDropTarget(x, y) {
       const ccGapRect = container.getBoundingClientRect();
       if (y > ccGapRect.top + EDGE && y < ccGapRect.bottom - EDGE) {
         const folderEl = container.closest(".nav-folder");
-        if (folderEl && folderEl.dataset.path && folderEl.dataset.path !== dragState.itemPath) {
+        if (folderEl && folderEl.dataset.path && folderEl.dataset.path !== dragState.itemPath && !dragState.batchPaths.includes(folderEl.dataset.path)) {
           return { itemEl: folderEl, containerPath, newIndex: -1, targetFolder: containerPath };
         }
       }
@@ -1212,10 +1288,6 @@ function resolveDropTarget(x, y) {
       if (y >= cr.bottom - fileEdge) {
         return { itemEl: child, containerPath, newIndex: i + 1, targetFolder: null };
       }
-      const ccFolderEl = container.closest(".nav-folder");
-      if (ccFolderEl && ccFolderEl.dataset.path && ccFolderEl.dataset.path !== dragState.itemPath) {
-        return { itemEl: ccFolderEl, containerPath, newIndex: -1, targetFolder: containerPath };
-      }
       return { itemEl: child, containerPath, newIndex: i, targetFolder: null };
     }
   }
@@ -1229,7 +1301,7 @@ function resolveDropTarget(x, y) {
   }
   if (!nearEdge2) {
     const folderEl = container.closest(".nav-folder");
-    if (folderEl && folderEl.dataset.path && folderEl.dataset.path !== dragState.itemPath) {
+    if (folderEl && folderEl.dataset.path && folderEl.dataset.path !== dragState.itemPath && !dragState.batchPaths.includes(folderEl.dataset.path)) {
       return { itemEl: folderEl, containerPath, newIndex: -1, targetFolder: containerPath };
     }
   }
@@ -1241,7 +1313,7 @@ function updatePathsOnMove(settings, oldPath, newPath) {
     if (key === oldPath)
       return newPath;
     if (prefix && key.startsWith(prefix))
-      return newPath + "/" + key.slice(prefix.length);
+      return (0, import_obsidian3.normalizePath)(newPath + "/" + key.slice(prefix.length));
     return key;
   };
   const next = { ...settings };
@@ -1308,7 +1380,7 @@ function stopDragScroll() {
 }
 
 // src/modal.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/generated/icon-list.ts
 var ICON_LIST = [
@@ -2750,36 +2822,8 @@ var ICON_LIST = [
 ];
 
 // src/modal.ts
-var cachedCustomItems = [];
-async function refreshCustomIcons(app, folderPath) {
-  cachedCustomItems = [];
-  customSvgContent.clear();
-  if (!folderPath)
-    return;
-  try {
-    const adapter = app.vault.adapter;
-    const exists = await adapter.exists(folderPath);
-    if (!exists)
-      return;
-    const walk = async (dir) => {
-      const entries = await adapter.list(dir);
-      for (const filePath of entries.files) {
-        if (filePath.toLowerCase().endsWith(".svg")) {
-          const svg = await adapter.read(filePath);
-          const key = `${CUSTOM_ICON_PREFIX}${filePath}`;
-          cachedCustomItems.push(key);
-          customSvgContent.set(key, svg);
-        }
-      }
-      for (const sub of entries.folders) {
-        await walk(sub);
-      }
-    };
-    await walk(folderPath);
-  } catch (e) {
-  }
-}
-var CommandSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
+init_icon_utils();
+var CommandSuggestModal = class extends import_obsidian4.FuzzySuggestModal {
   constructor(app, onSelect) {
     super(app);
     this.onSelect = onSelect;
@@ -2800,7 +2844,7 @@ var CommandSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
     this.onSelect(command);
   }
 };
-var IconSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
+var IconSuggestModal = class extends import_obsidian4.FuzzySuggestModal {
   constructor(app, customIconsFolder, onSelect) {
     super(app);
     this.onSelect = onSelect;
@@ -2841,7 +2885,7 @@ var IconSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
     this.onSelect(icon);
   }
 };
-var FolderSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
+var FolderSuggestModal = class extends import_obsidian4.FuzzySuggestModal {
   constructor(app, onSelect) {
     super(app);
     this.onSelect = onSelect;
@@ -2853,7 +2897,7 @@ var FolderSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
     ]);
   }
   getItems() {
-    return this.app.vault.getAllLoadedFiles().filter((f) => f instanceof import_obsidian2.TFolder);
+    return this.app.vault.getAllLoadedFiles().filter((f) => f instanceof import_obsidian4.TFolder);
   }
   getItemText(folder) {
     return folder.path || "(root)";
@@ -2862,15 +2906,19 @@ var FolderSuggestModal = class extends import_obsidian2.FuzzySuggestModal {
     this.onSelect(folder);
   }
 };
+
+// src/confirm-modal.ts
+var import_obsidian5 = require("obsidian");
 function showConfirmModal(app, title, description, confirmText) {
   return new Promise((resolve) => {
     const modal = new ConfirmModal(app, title, description, confirmText || "Delete", resolve);
     modal.open();
   });
 }
-var ConfirmModal = class extends import_obsidian2.Modal {
+var ConfirmModal = class extends import_obsidian5.Modal {
   constructor(app, titleText, desc, confirmText, resolve) {
     super(app);
+    this.resolved = false;
     this.titleText = titleText;
     this.desc = desc;
     this.confirmText = confirmText;
@@ -2881,7 +2929,7 @@ var ConfirmModal = class extends import_obsidian2.Modal {
     contentEl.empty();
     const headerDiv = contentEl.createDiv({ cls: "modal-header" });
     const iconEl = headerDiv.createSpan();
-    (0, import_obsidian2.setIcon)(iconEl, "trash-2");
+    (0, import_obsidian5.setIcon)(iconEl, "trash-2");
     iconEl.style.marginRight = "8px";
     iconEl.style.color = "var(--color-red)";
     headerDiv.createEl("h2", { text: this.titleText });
@@ -2902,20 +2950,22 @@ var ConfirmModal = class extends import_obsidian2.Modal {
       cls: "mod-warning"
     });
     deleteBtn.onclick = () => {
+      this.resolved = true;
       this.resolve(true);
       this.close();
     };
   }
   onClose() {
     this.contentEl.empty();
-    this.resolve(false);
+    if (!this.resolved)
+      this.resolve(false);
   }
 };
 
 // src/components/TreeNode.svelte
 function get_each_context(ctx, list, i) {
   const child_ctx = ctx.slice();
-  child_ctx[62] = list[i];
+  child_ctx[63] = list[i];
   return child_ctx;
 }
 function create_else_block_1(ctx) {
@@ -3022,6 +3072,7 @@ function create_else_block_1(ctx) {
             /*handleAuxClick*/
             ctx[26]
           ),
+          listen(div0, "mousedown", handleMiddleMouseDown),
           listen(
             div0,
             "dblclick",
@@ -3318,6 +3369,13 @@ function create_if_block(ctx) {
             /*handleClick*/
             ctx[27]
           ),
+          listen(
+            div0,
+            "auxclick",
+            /*handleAuxClick*/
+            ctx[26]
+          ),
+          listen(div0, "mousedown", handleMiddleMouseDown),
           listen(
             div0,
             "dblclick",
@@ -3871,7 +3929,7 @@ function create_if_block_1(ctx) {
   );
   const get_key = (ctx2) => (
     /*child*/
-    ctx2[62].path
+    ctx2[63].path
   );
   for (let i = 0; i < each_value.length; i += 1) {
     let child_ctx = get_each_context(ctx, each_value, i);
@@ -3942,7 +4000,7 @@ function create_each_block(key_1, ctx) {
       ),
       file: (
         /*child*/
-        ctx[62]
+        ctx[63]
       ),
       depth: (
         /*depth*/
@@ -4009,7 +4067,7 @@ function create_each_block(key_1, ctx) {
       if (dirty[0] & /*children*/
       4194304)
         treenode_changes.file = /*child*/
-        ctx[62];
+        ctx[63];
       if (dirty[0] & /*depth*/
       8)
         treenode_changes.depth = /*depth*/
@@ -4137,6 +4195,10 @@ function create_fragment(ctx) {
     }
   };
 }
+function handleMiddleMouseDown(e) {
+  if (e.button === 1)
+    e.preventDefault();
+}
 function instance($$self, $$props, $$invalidate) {
   let isFolder;
   let isArchived;
@@ -4182,7 +4244,7 @@ function instance($$self, $$props, $$invalidate) {
     if (e.button !== 1)
       return;
     e.preventDefault();
-    if (file instanceof import_obsidian3.TFile) {
+    if (file instanceof import_obsidian6.TFile) {
       onClearSelection();
       app.workspace.getLeaf("tab").openFile(file);
     }
@@ -4196,10 +4258,9 @@ function instance($$self, $$props, $$invalidate) {
       onSelect(file.path, e.shiftKey, e.ctrlKey);
       return;
     }
-    if (file instanceof import_obsidian3.TFile && file.path === activeFilePath) {
-      onSelect(file.path, false, false);
-    } else if (file instanceof import_obsidian3.TFile) {
-      onClearSelection();
+    onClearSelection();
+    onSelect(file.path, false, false);
+    if (file instanceof import_obsidian6.TFile) {
       app.workspace.getLeaf().openFile(file);
     } else {
       $$invalidate(12, collapsed = !collapsed);
@@ -4232,9 +4293,9 @@ function instance($$self, $$props, $$invalidate) {
         return;
       }
       const parentPath = file.parent ? file.parent.path : "";
-      const ext = file instanceof import_obsidian3.TFile ? file.extension : "";
+      const ext = file instanceof import_obsidian6.TFile ? file.extension : "";
       const finalName = ext && !newName.endsWith("." + ext) ? newName + "." + ext : newName;
-      const newPath = parentPath ? `${parentPath}/${finalName}` : finalName;
+      const newPath = parentPath ? (0, import_obsidian6.normalizePath)(`${parentPath}/${finalName}`) : finalName;
       const oldPath = file.path;
       const savedSettings = settings;
       try {
@@ -4271,14 +4332,52 @@ function instance($$self, $$props, $$invalidate) {
   }
   function duplicateFolderRecursive(src, destPath) {
     return __awaiter(this, void 0, void 0, function* () {
-      yield app.vault.createFolder(destPath);
-      for (const child of src.children) {
-        if (child instanceof import_obsidian3.TFile) {
-          yield app.vault.copy(child, `${destPath}/${child.name}`);
-        } else if (child instanceof import_obsidian3.TFolder) {
-          yield duplicateFolderRecursive(child, `${destPath}/${child.name}`);
+      const foldersToCreate = [];
+      const filesToCopy = [];
+      function collect(s, d) {
+        foldersToCreate.push(d);
+        for (const child of s.children) {
+          const childDest = (0, import_obsidian6.normalizePath)(`${d}/${child.name}`);
+          if (child instanceof import_obsidian6.TFile) {
+            filesToCopy.push({ src: child, dest: childDest });
+          } else if (child instanceof import_obsidian6.TFolder) {
+            collect(child, childDest);
+          }
         }
       }
+      collect(src, destPath);
+      for (const fp of foldersToCreate) {
+        yield app.vault.createFolder(fp);
+      }
+      const batchSize = 10;
+      for (let i = 0; i < filesToCopy.length; i += batchSize) {
+        const batch = filesToCopy.slice(i, i + batchSize);
+        const results = yield Promise.allSettled(batch.map((f) => app.vault.copy(f.src, f.dest)));
+        for (const r of results) {
+          if (r.status === "rejected") {
+            console.error("Duplicate file failed:", r.reason);
+          }
+        }
+      }
+    });
+  }
+  function duplicateFile(file2) {
+    var _a2;
+    return __awaiter(this, void 0, void 0, function* () {
+      const parentPath = ((_a2 = file2.parent) === null || _a2 === void 0 ? void 0 : _a2.path) || "";
+      const ext = file2.extension;
+      const baseName = file2.name.slice(0, -(ext.length + 1));
+      let newName = `${baseName} (copy).${ext}`;
+      let newPath = parentPath ? (0, import_obsidian6.normalizePath)(`${parentPath}/${newName}`) : newName;
+      let counter = 1;
+      while (app.vault.getAbstractFileByPath(newPath)) {
+        newName = `${baseName} (copy ${counter}).${ext}`;
+        newPath = parentPath ? (0, import_obsidian6.normalizePath)(`${parentPath}/${newName}`) : newName;
+        counter++;
+      }
+      yield app.vault.copy(file2, newPath);
+      const result = app.vault.getAbstractFileByPath(newPath);
+      return result instanceof import_obsidian6.TFile ? result : null;
     });
   }
   const COLOR_PRESETS = [
@@ -4321,20 +4420,21 @@ function instance($$self, $$props, $$invalidate) {
   function handleContextMenu(event) {
     event.preventDefault();
     event.stopPropagation();
-    const menu = new import_obsidian3.Menu();
+    const menu = new import_obsidian6.Menu();
+    const pluginInstance = () => app.plugins.plugins["simple-navigator"];
     if (isFolder) {
       menu.addItem((item) => item.setTitle("New note").setIcon("file-plus").onClick(() => __awaiter(this, void 0, void 0, function* () {
         const folder = file;
-        const path = app.vault.getAvailablePath(folder.path + "/Untitled", "md");
+        const path = app.vault.getAvailablePath((0, import_obsidian6.normalizePath)(folder.path + "/Untitled"), "md");
         yield app.vault.create(path, "");
         const f = app.vault.getAbstractFileByPath(path);
-        if (f instanceof import_obsidian3.TFile) {
+        if (f instanceof import_obsidian6.TFile) {
           yield app.workspace.getLeaf().openFile(f);
         }
       })));
       menu.addItem((item) => item.setTitle("New folder").setIcon("folder-plus").onClick(() => __awaiter(this, void 0, void 0, function* () {
         const folder = file;
-        const path = app.vault.getAvailablePath(folder.path + "/New folder", "");
+        const path = app.vault.getAvailablePath((0, import_obsidian6.normalizePath)(folder.path + "/New folder"), "");
         yield app.vault.createFolder(path);
       })));
       if (settings.newMenuCommands && settings.newMenuCommands.length > 0) {
@@ -4349,6 +4449,9 @@ function instance($$self, $$props, $$invalidate) {
               if (cmd.icon)
                 s.setIcon(cmd.icon);
               s.onClick(() => {
+                const p = pluginInstance();
+                if (p)
+                  p.lastClicked = file;
                 app.commands.executeCommandById(cmd.commandId);
               });
             });
@@ -4358,17 +4461,32 @@ function instance($$self, $$props, $$invalidate) {
       menu.addSeparator();
       menu.addItem((item) => item.setTitle("Duplicate").setIcon("copy").onClick(() => __awaiter(this, void 0, void 0, function* () {
         var _a2;
-        if (file instanceof import_obsidian3.TFolder) {
+        if (file instanceof import_obsidian6.TFolder) {
           const parentPath = ((_a2 = file.parent) === null || _a2 === void 0 ? void 0 : _a2.path) || "";
           let newName = file.name + " (copy)";
-          let newPath = parentPath ? `${parentPath}/${newName}` : newName;
+          let newPath = parentPath ? (0, import_obsidian6.normalizePath)(`${parentPath}/${newName}`) : newName;
           let counter = 1;
           while (app.vault.getAbstractFileByPath(newPath)) {
             newName = file.name + ` (copy ${counter})`;
-            newPath = parentPath ? `${parentPath}/${newName}` : newName;
+            newPath = parentPath ? (0, import_obsidian6.normalizePath)(`${parentPath}/${newName}`) : newName;
             counter++;
           }
-          yield duplicateFolderRecursive(file, newPath);
+          try {
+            yield duplicateFolderRecursive(file, newPath);
+            const srcPrefix = file.path + "/";
+            const orderMap = Object.assign({}, settings.orderMap);
+            for (const [key, val] of Object.entries(settings.orderMap)) {
+              if (key === file.path) {
+                orderMap[newPath] = [...val];
+              } else if (key.startsWith(srcPrefix)) {
+                orderMap[newPath + key.slice(srcPrefix.length - 1)] = [...val];
+              }
+            }
+            $$invalidate(0, settings = Object.assign(Object.assign({}, settings), { orderMap }));
+            yield onUpdateSettings(settings);
+          } catch (e) {
+            console.error("Duplicate folder error:", e);
+          }
         }
       })));
       menu.addSeparator();
@@ -4390,8 +4508,12 @@ function instance($$self, $$props, $$invalidate) {
       menu.addSeparator();
     } else if (!isFolder) {
       menu.addItem((item) => item.setTitle("Duplicate").setIcon("copy").onClick(() => __awaiter(this, void 0, void 0, function* () {
-        if (file instanceof import_obsidian3.TFile) {
-          yield app.fileManager.duplicateFile(file);
+        if (file instanceof import_obsidian6.TFile) {
+          try {
+            yield duplicateFile(file);
+          } catch (e) {
+            console.error("Duplicate file error:", e);
+          }
         }
       })));
       menu.addSeparator();
@@ -4577,29 +4699,46 @@ function instance($$self, $$props, $$invalidate) {
         })));
       });
     }
-    for (const [sectionName, entries] of Object.entries(settings.submenus)) {
-      if (entries.length === 0)
-        continue;
-      menu.addItem((item) => {
-        item.setTitle(sectionName).setIcon("terminal");
-        const sub = item.setSubmenu();
-        for (const cmd of entries) {
-          if (!cmd.commandId)
-            continue;
-          sub.addItem((s) => {
-            s.setTitle(cmd.label);
-            if (cmd.icon)
-              s.setIcon(cmd.icon);
-            s.onClick(() => {
-              app.commands.executeCommandById(cmd.commandId);
+    const submenuEntries = Object.entries(settings.submenus).filter(([, e]) => e.length > 0);
+    if (submenuEntries.length > 0) {
+      menu.addSeparator();
+      for (const [sectionName, entries] of submenuEntries) {
+        menu.addItem((item) => {
+          var _a2;
+          item.setTitle(sectionName);
+          const icon = (_a2 = settings.submenuIcons) === null || _a2 === void 0 ? void 0 : _a2[sectionName];
+          if (icon)
+            item.setIcon(icon);
+          const sub = item.setSubmenu();
+          for (const cmd of entries) {
+            if (cmd.isSeparator) {
+              sub.addSeparator();
+              continue;
+            }
+            if (!cmd.commandId)
+              continue;
+            sub.addItem((s) => {
+              s.setTitle(cmd.label);
+              if (cmd.icon)
+                s.setIcon(cmd.icon);
+              s.onClick(() => {
+                const p = pluginInstance();
+                if (p)
+                  p.lastClicked = file;
+                app.commands.executeCommandById(cmd.commandId);
+              });
             });
-          });
-        }
-      });
+          }
+        });
+      }
+      menu.addSeparator();
     }
     if (settings.mainMenuCommands.length > 0) {
-      menu.addSeparator();
       for (const cmd of settings.mainMenuCommands) {
+        if (cmd.isSeparator) {
+          menu.addSeparator();
+          continue;
+        }
         if (!cmd.commandId)
           continue;
         menu.addItem((s) => {
@@ -4607,6 +4746,9 @@ function instance($$self, $$props, $$invalidate) {
           if (cmd.icon)
             s.setIcon(cmd.icon);
           s.onClick(() => {
+            const p = pluginInstance();
+            if (p)
+              p.lastClicked = file;
             app.commands.executeCommandById(cmd.commandId);
           });
         });
@@ -4635,6 +4777,22 @@ function instance($$self, $$props, $$invalidate) {
     dragState.targetFolder = null;
     dragState.toPath = "";
     dragState.newIndex = -1;
+    const sameParentSelected = Array.from(selectedPaths).filter((p) => {
+      const pp = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
+      return pp === fromPath;
+    });
+    const batchSet = new Set(sameParentSelected);
+    batchSet.add(itemPath);
+    if (batchSet.size >= 2) {
+      const domChildren = Array.from(container.children);
+      dragState.batchPaths = Array.from(batchSet).sort((a, b) => {
+        const aEl = domChildren.find((el) => el.dataset.path === a);
+        const bEl = domChildren.find((el) => el.dataset.path === b);
+        return aEl && bEl ? Array.from(domChildren).indexOf(aEl) - Array.from(domChildren).indexOf(bEl) : 0;
+      });
+    } else {
+      dragState.batchPaths = [];
+    }
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", itemPath);
     const color = settings.colorMap[itemPath] || "var(--text-faint)";
@@ -4681,13 +4839,15 @@ function instance($$self, $$props, $$invalidate) {
     const fromPath = dragState.fromPath;
     const itemPath = dragState.itemPath;
     const oldIndex = dragState.oldIndex;
+    const batchPaths = dragState.batchPaths.length > 0 ? dragState.batchPaths : void 0;
     if (dragState.targetFolder) {
       onSortEnd({
         fromPath,
         toPath: dragState.targetFolder,
         oldIndex,
         newIndex: -1,
-        itemPath
+        itemPath,
+        batchPaths
       });
     } else if (dragState.toPath !== "" || dragState.newIndex >= 0) {
       onSortEnd({
@@ -4695,11 +4855,13 @@ function instance($$self, $$props, $$invalidate) {
         toPath: dragState.toPath,
         oldIndex,
         newIndex: dragState.newIndex,
-        itemPath
+        itemPath,
+        batchPaths
       });
     }
     dragState.itemPath = "";
     dragState.fromPath = "";
+    dragState.batchPaths = [];
   }
   function handleDragLeave(e) {
     const target = e.currentTarget;
@@ -4711,6 +4873,7 @@ function instance($$self, $$props, $$invalidate) {
   function handleDragEnd(e) {
     destroyDropIndicator();
     document.body.classList.remove("sn-is-dragging");
+    dragState.batchPaths = [];
   }
   function span_binding($$value) {
     binding_callbacks[$$value ? "unshift" : "push"](() => {
@@ -4777,7 +4940,7 @@ function instance($$self, $$props, $$invalidate) {
     if ($$self.$$.dirty[0] & /*file*/
     4) {
       $:
-        $$invalidate(17, isFolder = file instanceof import_obsidian3.TFolder);
+        $$invalidate(17, isFolder = file instanceof import_obsidian6.TFolder);
     }
     if ($$self.$$.dirty[0] & /*renameInputEl, editingPath, file, isFolder*/
     229380) {
@@ -4847,7 +5010,7 @@ function instance($$self, $$props, $$invalidate) {
     if ($$self.$$.dirty[0] & /*isArchived, file*/
     262148) {
       $:
-        $$invalidate(21, fileCount = isArchived && file instanceof import_obsidian3.TFolder ? countFiles(file) : 0);
+        $$invalidate(21, fileCount = isArchived && file instanceof import_obsidian6.TFolder ? countFiles(file) : 0);
     }
     if ($$self.$$.dirty[0] & /*settings, file, isArchived, isFolder*/
     393221 | $$self.$$.dirty[1] & /*extHidden*/
@@ -4917,7 +5080,7 @@ function instance($$self, $$props, $$invalidate) {
     if ($$self.$$.dirty[0] & /*isFolder, file, activeFilePath*/
     131092) {
       $:
-        $$invalidate(20, isActive = !isFolder && file instanceof import_obsidian3.TFile && file.path === activeFilePath);
+        $$invalidate(20, isActive = !isFolder && file instanceof import_obsidian6.TFile && file.path === activeFilePath);
     }
     if ($$self.$$.dirty[0] & /*settings, file*/
     5) {
@@ -5026,7 +5189,7 @@ var TreeNode_default = TreeNode;
 // src/components/TreeView.svelte
 function get_each_context2(ctx, list, i) {
   const child_ctx = ctx.slice();
-  child_ctx[25] = list[i];
+  child_ctx[26] = list[i];
   return child_ctx;
 }
 function create_each_block2(key_1, ctx) {
@@ -5041,7 +5204,7 @@ function create_each_block2(key_1, ctx) {
       ),
       file: (
         /*child*/
-        ctx[25]
+        ctx[26]
       ),
       depth: 0,
       activeFilePath: (
@@ -5105,7 +5268,7 @@ function create_each_block2(key_1, ctx) {
       if (dirty & /*children*/
       128)
         treenode_changes.file = /*child*/
-        ctx[25];
+        ctx[26];
       if (dirty & /*activeFilePath*/
       32)
         treenode_changes.activeFilePath = /*activeFilePath*/
@@ -5164,7 +5327,7 @@ function create_fragment2(ctx) {
   );
   const get_key = (ctx2) => (
     /*child*/
-    ctx2[25].path
+    ctx2[26].path
   );
   for (let i = 0; i < each_value.length; i += 1) {
     let child_ctx = get_each_context2(ctx, each_value, i);
@@ -5193,7 +5356,7 @@ function create_fragment2(ctx) {
       current = true;
       if (!mounted) {
         dispose = [
-          listen(div1, "click", self(
+          listen(div0, "click", self(
             /*clearSelection*/
             ctx[9]
           )),
@@ -5265,6 +5428,7 @@ function instance2($$self, $$props, $$invalidate) {
   let { showHidden = false } = $$props;
   let { refreshKey = 0 } = $$props;
   let { onUpdateSettings } = $$props;
+  let { registerDomEvent } = $$props;
   let activeFilePath = "";
   let activeLeafRef;
   let selectedPaths = /* @__PURE__ */ new Set();
@@ -5295,9 +5459,8 @@ function instance2($$self, $$props, $$invalidate) {
       }
       $$invalidate(6, selectedPaths = new Set(selectedPaths));
     } else {
-      $$invalidate(6, selectedPaths = /* @__PURE__ */ new Set([path]));
+      lastClickedPath = path;
     }
-    lastClickedPath = path;
   }
   function clearSelection() {
     $$invalidate(6, selectedPaths = /* @__PURE__ */ new Set());
@@ -5336,6 +5499,7 @@ function instance2($$self, $$props, $$invalidate) {
     const fromPath = dragState.fromPath;
     const itemPath = dragState.itemPath;
     const oldIndex = dragState.oldIndex;
+    const batchPaths = dragState.batchPaths.length > 0 ? dragState.batchPaths : void 0;
     try {
       if (dragState.targetFolder) {
         handleSortEnd({
@@ -5343,7 +5507,8 @@ function instance2($$self, $$props, $$invalidate) {
           toPath: dragState.targetFolder,
           oldIndex,
           newIndex: -1,
-          itemPath
+          itemPath,
+          batchPaths
         });
       } else if (dragState.toPath !== "" || dragState.newIndex >= 0) {
         handleSortEnd({
@@ -5351,7 +5516,8 @@ function instance2($$self, $$props, $$invalidate) {
           toPath: dragState.toPath,
           oldIndex,
           newIndex: dragState.newIndex,
-          itemPath
+          itemPath,
+          batchPaths
         });
       }
     } catch (err) {
@@ -5396,7 +5562,9 @@ function instance2($$self, $$props, $$invalidate) {
     handleRootDrop(e);
   }
   function handleSortEnd(detail) {
+    var _a;
     return __awaiter(this, void 0, void 0, function* () {
+      const items = detail.batchPaths && detail.batchPaths.length > 0 ? detail.batchPaths : [detail.itemPath];
       if (detail.fromPath === detail.toPath && detail.newIndex >= 0) {
         if (detail.fromPath && settings.archivedPaths.includes(detail.fromPath))
           return;
@@ -5405,12 +5573,8 @@ function instance2($$self, $$props, $$invalidate) {
           console.warn("Container not found for", detail.fromPath);
           return;
         }
-        const itemName = detail.itemPath.split("/").pop() || detail.itemPath;
-        let adjustedNewIndex = detail.newIndex;
-        if (adjustedNewIndex > detail.oldIndex) {
-          adjustedNewIndex--;
-        }
-        const orderedNames = [];
+        const itemNames = items.map((p) => p.split("/").pop() || p);
+        let orderedNames = [];
         for (let i = 0; i < container.children.length; i++) {
           const child = container.children[i];
           const path = child.dataset.path;
@@ -5420,42 +5584,68 @@ function instance2($$self, $$props, $$invalidate) {
               orderedNames.push(name);
           }
         }
-        const idx = orderedNames.indexOf(itemName);
-        if (idx >= 0) {
-          orderedNames.splice(idx, 1);
-          orderedNames.splice(adjustedNewIndex, 0, itemName);
+        if (items.length === 1) {
+          const itemName = itemNames[0];
+          let adjustedNewIndex = detail.newIndex;
+          if (adjustedNewIndex > detail.oldIndex)
+            adjustedNewIndex--;
+          const idx = orderedNames.indexOf(itemName);
+          if (idx >= 0) {
+            orderedNames.splice(idx, 1);
+            orderedNames.splice(adjustedNewIndex, 0, itemName);
+          }
+        } else {
+          const preRemoveIndices = itemNames.map((name) => orderedNames.indexOf(name)).filter((idx) => idx >= 0);
+          const sortedDesc = [...preRemoveIndices].sort((a, b) => b - a);
+          for (const idx of sortedDesc)
+            orderedNames.splice(idx, 1);
+          const numBeforeNew = preRemoveIndices.filter((idx) => idx < detail.newIndex).length;
+          const adjustedNewIndex = Math.max(0, detail.newIndex - numBeforeNew);
+          const safeIndex = Math.min(adjustedNewIndex, orderedNames.length);
+          orderedNames.splice(safeIndex, 0, ...itemNames);
         }
         $$invalidate(0, settings = Object.assign(Object.assign({}, settings), {
           orderMap: Object.assign(Object.assign({}, settings.orderMap), { [detail.fromPath]: orderedNames })
         }));
         yield onUpdateSettings(settings);
       } else {
-        const file = app.vault.getAbstractFileByPath(detail.itemPath);
-        if (!file)
-          return;
-        if (file instanceof import_obsidian4.TFolder && detail.toPath && (detail.toPath === detail.itemPath || detail.toPath.startsWith(detail.itemPath + "/"))) {
-          console.warn("Cannot move folder into itself or descendant", detail.itemPath, detail.toPath);
-          return;
-        }
-        const targetPath = detail.toPath ? `${detail.toPath}/${file.name}` : file.name;
         const savedSettings = settings;
+        let currentSettings = settings;
+        const movedItems = [];
         try {
-          const itemPathPrefix = detail.itemPath + "/";
-          app.workspace.iterateAllLeaves((leaf) => {
-            var _a, _b;
-            const leafPath = (_b = (_a = leaf.view) === null || _a === void 0 ? void 0 : _a.file) === null || _b === void 0 ? void 0 : _b.path;
-            if (leafPath && (leafPath === detail.itemPath || leafPath.startsWith(itemPathPrefix))) {
-              leaf.detach();
+          for (const itemPath of items) {
+            const file = app.vault.getAbstractFileByPath(itemPath);
+            if (!file)
+              continue;
+            if (file instanceof import_obsidian7.TFolder && detail.toPath && (detail.toPath === itemPath || detail.toPath.startsWith(itemPath + "/"))) {
+              console.warn("Cannot move folder into itself or descendant", itemPath, detail.toPath);
+              continue;
             }
-          });
-          yield app.fileManager.renameFile(file, targetPath);
-          $$invalidate(0, settings = updatePathsOnMove(settings, detail.itemPath, targetPath));
+            const targetPath = detail.toPath ? (0, import_obsidian7.normalizePath)(`${detail.toPath}/${file.name}`) : file.name;
+            const itemPathPrefix = itemPath + "/";
+            app.workspace.iterateAllLeaves((leaf) => {
+              var _a2, _b;
+              const leafPath = (_b = (_a2 = leaf.view) === null || _a2 === void 0 ? void 0 : _a2.file) === null || _b === void 0 ? void 0 : _b.path;
+              if (leafPath && (leafPath === itemPath || leafPath.startsWith(itemPathPrefix))) {
+                leaf.detach();
+              }
+            });
+            yield app.fileManager.renameFile(file, targetPath);
+            currentSettings = updatePathsOnMove(currentSettings, itemPath, targetPath);
+            movedItems.push({
+              oldPath: itemPath,
+              newPath: targetPath,
+              file
+            });
+          }
         } catch (e) {
+          const failedItem = movedItems.length > 0 ? movedItems[movedItems.length - 1] : null;
           console.error("Failed to move file:", e);
-          new import_obsidian4.Notice(`Cannot move "${file.name}": file is locked`);
+          new import_obsidian7.Notice(`Cannot move "${((_a = failedItem === null || failedItem === void 0 ? void 0 : failedItem.file) === null || _a === void 0 ? void 0 : _a.name) || items[0]}": file is locked`);
           $$invalidate(0, settings = savedSettings);
           return;
         }
+        $$invalidate(0, settings = currentSettings);
         const getFolder = (p) => p === "" ? app.vault.getRoot() : app.vault.getAbstractFileByPath(p);
         const sourceFolder = getFolder(detail.fromPath);
         const targetFolder = getFolder(detail.toPath);
@@ -5485,6 +5675,7 @@ function instance2($$self, $$props, $$invalidate) {
         const isArchivedTarget = detail.toPath && settings.archivedPaths.includes(detail.toPath);
         const targetContainer = document.querySelector(`.simple-navigator-tree [data-folder-path="${detail.toPath}"]`);
         let orderedNames;
+        const itemNames = movedItems.map((m) => m.file.name);
         if (targetContainer) {
           orderedNames = [];
           for (let i = 0; i < targetContainer.children.length; i++) {
@@ -5497,24 +5688,24 @@ function instance2($$self, $$props, $$invalidate) {
             }
           }
           if (detail.newIndex >= 0 && !isArchivedTarget) {
-            const itemName = file.name;
-            const idx = orderedNames.indexOf(itemName);
-            if (idx >= 0) {
-              orderedNames.splice(idx, 1);
+            for (const name of itemNames) {
+              const idx = orderedNames.indexOf(name);
+              if (idx >= 0)
+                orderedNames.splice(idx, 1);
             }
             const safeIndex = Math.min(detail.newIndex, orderedNames.length);
-            orderedNames.splice(safeIndex, 0, itemName);
+            orderedNames.splice(safeIndex, 0, ...itemNames);
           }
         } else {
           orderedNames = ((targetFolder === null || targetFolder === void 0 ? void 0 : targetFolder.children) || []).map((c) => c.name);
           if (detail.newIndex >= 0 && !isArchivedTarget) {
-            const itemName = file.name;
-            const idx = orderedNames.indexOf(itemName);
-            if (idx >= 0) {
-              orderedNames.splice(idx, 1);
+            for (const name of itemNames) {
+              const idx = orderedNames.indexOf(name);
+              if (idx >= 0)
+                orderedNames.splice(idx, 1);
             }
             const safeIndex = Math.min(detail.newIndex, orderedNames.length);
-            orderedNames.splice(safeIndex, 0, itemName);
+            orderedNames.splice(safeIndex, 0, ...itemNames);
           }
         }
         if (!isArchivedTarget) {
@@ -5527,17 +5718,21 @@ function instance2($$self, $$props, $$invalidate) {
   }
   function handleRootContextMenu(event) {
     event.preventDefault();
-    const menu = new import_obsidian4.Menu();
+    const menu = new import_obsidian7.Menu();
     menu.addItem((item) => item.setTitle("New note").setIcon("file-plus").onClick(() => __awaiter(this, void 0, void 0, function* () {
-      const path = app.vault.getAvailablePath("Untitled", "md");
+      const parent = app.fileManager.getNewFileParent("");
+      const basePath = parent.path ? (0, import_obsidian7.normalizePath)(`${parent.path}/Untitled`) : "Untitled";
+      const path = app.vault.getAvailablePath(basePath, "md");
       yield app.vault.create(path, "");
       const f = app.vault.getAbstractFileByPath(path);
-      if (f instanceof import_obsidian4.TFile) {
+      if (f instanceof import_obsidian7.TFile) {
         yield app.workspace.getLeaf().openFile(f);
       }
     })));
     menu.addItem((item) => item.setTitle("New folder").setIcon("folder-plus").onClick(() => __awaiter(this, void 0, void 0, function* () {
-      const path = app.vault.getAvailablePath("New folder", "");
+      const parent = app.fileManager.getNewFileParent("");
+      const basePath = parent.path ? (0, import_obsidian7.normalizePath)(`${parent.path}/New folder`) : "New folder";
+      const path = app.vault.getAvailablePath(basePath, "");
       yield app.vault.createFolder(path);
     })));
     if (settings.newMenuCommands && settings.newMenuCommands.length > 0) {
@@ -5552,34 +5747,50 @@ function instance2($$self, $$props, $$invalidate) {
             if (cmd.icon)
               s.setIcon(cmd.icon);
             s.onClick(() => {
+              const p = app.plugins.plugins["simple-navigator"];
+              if (p)
+                p.lastClicked = null;
               app.commands.executeCommandById(cmd.commandId);
             });
           });
         }
       });
     }
-    for (const [sectionName, entries] of Object.entries(settings.submenus)) {
-      if (entries.length === 0)
-        continue;
-      menu.addItem((item) => {
-        item.setTitle(sectionName).setIcon("terminal");
-        const sub = item.setSubmenu();
-        for (const cmd of entries) {
-          if (!cmd.commandId)
-            continue;
-          sub.addItem((s) => {
-            s.setTitle(cmd.label);
-            if (cmd.icon)
-              s.setIcon(cmd.icon);
-            s.onClick(() => {
-              app.commands.executeCommandById(cmd.commandId);
+    const submenuEntries = Object.entries(settings.submenus).filter(([, e]) => e.length > 0);
+    if (submenuEntries.length > 0) {
+      menu.addSeparator();
+      for (const [sectionName, entries] of submenuEntries) {
+        menu.addItem((item) => {
+          var _a;
+          item.setTitle(sectionName);
+          const icon = (_a = settings.submenuIcons) === null || _a === void 0 ? void 0 : _a[sectionName];
+          if (icon)
+            item.setIcon(icon);
+          const sub = item.setSubmenu();
+          for (const cmd of entries) {
+            if (cmd.isSeparator) {
+              sub.addSeparator();
+              continue;
+            }
+            if (!cmd.commandId)
+              continue;
+            sub.addItem((s) => {
+              s.setTitle(cmd.label);
+              if (cmd.icon)
+                s.setIcon(cmd.icon);
+              s.onClick(() => {
+                const p = app.plugins.plugins["simple-navigator"];
+                if (p)
+                  p.lastClicked = null;
+                app.commands.executeCommandById(cmd.commandId);
+              });
             });
-          });
-        }
-      });
+          }
+        });
+      }
+      menu.addSeparator();
     }
     if (settings.mainMenuCommands.length > 0) {
-      menu.addSeparator();
       for (const cmd of settings.mainMenuCommands) {
         if (!cmd.commandId)
           continue;
@@ -5588,6 +5799,9 @@ function instance2($$self, $$props, $$invalidate) {
           if (cmd.icon)
             s.setIcon(cmd.icon);
           s.onClick(() => {
+            const p = app.plugins.plugins["simple-navigator"];
+            if (p)
+              p.lastClicked = null;
             app.commands.executeCommandById(cmd.commandId);
           });
         });
@@ -5641,7 +5855,7 @@ function instance2($$self, $$props, $$invalidate) {
         }))();
       }
     };
-    document.addEventListener("keydown", keydownHandler);
+    registerDomEvent(document, "keydown", keydownHandler);
     rootContextHandler = (e) => {
       const target = e.target;
       if (!target.closest(".simple-navigator-tree"))
@@ -5650,9 +5864,9 @@ function instance2($$self, $$props, $$invalidate) {
         return;
       handleRootContextMenu(e);
     };
-    document.addEventListener("contextmenu", rootContextHandler);
-    window.addEventListener("dragover", handleWindowDragOver, true);
-    window.addEventListener("drop", handleWindowDrop, true);
+    registerDomEvent(document, "contextmenu", rootContextHandler);
+    registerDomEvent(window, "dragover", handleWindowDragOver, true);
+    registerDomEvent(window, "drop", handleWindowDrop, true);
   });
   onDestroy(() => {
     if (activeLeafRef) {
@@ -5666,6 +5880,13 @@ function instance2($$self, $$props, $$invalidate) {
     if (rootContextHandler) {
       document.removeEventListener("contextmenu", rootContextHandler);
     }
+    destroyDropIndicator();
+    document.body.classList.remove("sn-is-dragging");
+    dragState.fromPath = "";
+    dragState.itemPath = "";
+    dragState.batchPaths = [];
+    dragState.targetFolder = null;
+    dragState.toPath = "";
   });
   $$self.$$set = ($$props2) => {
     if ("app" in $$props2)
@@ -5680,20 +5901,22 @@ function instance2($$self, $$props, $$invalidate) {
       $$invalidate(3, refreshKey = $$props2.refreshKey);
     if ("onUpdateSettings" in $$props2)
       $$invalidate(4, onUpdateSettings = $$props2.onUpdateSettings);
+    if ("registerDomEvent" in $$props2)
+      $$invalidate(15, registerDomEvent = $$props2.registerDomEvent);
   };
   $$self.$$.update = () => {
     if ($$self.$$.dirty & /*rootFolder, settings, refreshKey*/
     16393) {
       $:
-        $$invalidate(16, rawChildren = sortWithOrder([...rootFolder.children], settings.orderMap, "", refreshKey));
+        $$invalidate(17, rawChildren = sortWithOrder([...rootFolder.children], settings.orderMap, "", refreshKey));
     }
     if ($$self.$$.dirty & /*settings*/
     1) {
       $:
-        $$invalidate(15, hiddenSet = new Set(settings.hiddenPaths));
+        $$invalidate(16, hiddenSet = new Set(settings.hiddenPaths));
     }
     if ($$self.$$.dirty & /*showHidden, rawChildren, hiddenSet*/
-    98308) {
+    196612) {
       $:
         $$invalidate(7, children2 = showHidden ? rawChildren : rawChildren.filter((c) => !hiddenSet.has(c.path)));
     }
@@ -5714,6 +5937,7 @@ function instance2($$self, $$props, $$invalidate) {
     handleRootDragLeave,
     handleSortEnd,
     rootFolder,
+    registerDomEvent,
     hiddenSet,
     rawChildren
   ];
@@ -5727,7 +5951,8 @@ var TreeView = class extends SvelteComponent {
       settings: 0,
       showHidden: 2,
       refreshKey: 3,
-      onUpdateSettings: 4
+      onUpdateSettings: 4,
+      registerDomEvent: 15
     });
   }
 };
@@ -5735,12 +5960,13 @@ var TreeView_default = TreeView;
 
 // src/SimpleNavigatorView.ts
 var SIMPLE_NAVIGATOR_VIEW = "simple-navigator-view";
-var SimpleNavigatorView = class extends import_obsidian5.ItemView {
+var SimpleNavigatorView = class extends import_obsidian8.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.component = null;
     this.vaultRefs = [];
     this.refreshKey = 0;
+    this.bumpRaf = null;
     this.plugin = plugin;
     this.showHidden = plugin.settings.showHidden;
   }
@@ -5776,16 +6002,16 @@ var SimpleNavigatorView = class extends import_obsidian5.ItemView {
           this.plugin.settings = s;
           await this.plugin.saveSettings();
           (_a = this.component) == null ? void 0 : _a.$set({ settings: this.plugin.settings });
-        }
+        },
+        registerDomEvent: this.plugin.registerDomEvent.bind(this.plugin)
       }
     });
-    let bumpRaf = null;
     const bump = () => {
-      if (bumpRaf)
+      if (this.bumpRaf)
         return;
-      bumpRaf = requestAnimationFrame(() => {
+      this.bumpRaf = requestAnimationFrame(() => {
         var _a;
-        bumpRaf = null;
+        this.bumpRaf = null;
         this.refreshKey++;
         (_a = this.component) == null ? void 0 : _a.$set({ refreshKey: this.refreshKey });
       });
@@ -5797,6 +6023,10 @@ var SimpleNavigatorView = class extends import_obsidian5.ItemView {
     );
   }
   async onClose() {
+    if (this.bumpRaf !== null) {
+      cancelAnimationFrame(this.bumpRaf);
+      this.bumpRaf = null;
+    }
     for (const ref of this.vaultRefs) {
       this.app.vault.offref(ref);
     }
@@ -5809,7 +6039,8 @@ var SimpleNavigatorView = class extends import_obsidian5.ItemView {
 };
 
 // src/settings.ts
-var import_obsidian6 = require("obsidian");
+var import_obsidian9 = require("obsidian");
+init_icon_utils();
 var DEFAULT_SETTINGS = {
   orderMap: {},
   hiddenPaths: [],
@@ -5830,12 +6061,13 @@ var DEFAULT_SETTINGS = {
   renameOnDoubleClickFiles: false,
   renameOnDoubleClickFolders: false,
   submenus: {},
+  submenuIcons: {},
   mainMenuCommands: [],
   newMenuCommands: [],
   customIconsFolder: "",
   confirmDelete: true
 };
-var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab {
+var SimpleNavigatorSettingTab = class extends import_obsidian9.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -5844,7 +6076,7 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl("h2", { text: "Simple Navigator Settings" });
-    new import_obsidian6.Setting(containerEl).setName("Icon follows color").setDesc(
+    new import_obsidian9.Setting(containerEl).setName("Icon follows color").setDesc(
       "When enabled, file and folder icons will inherit the custom color assigned to them."
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.iconFollowsColor).onChange(async (value) => {
@@ -5852,7 +6084,7 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("Visible file extensions").setDesc(
+    new import_obsidian9.Setting(containerEl).setName("Visible file extensions").setDesc(
       "Comma-separated list of extensions to show in filenames. Extensions not listed will be hidden. Leave empty to show all extensions."
     ).addText(
       (text2) => text2.setPlaceholder(".js, .pdf, .txt").setValue(this.plugin.settings.visibleExtensions).onChange(async (value) => {
@@ -5860,7 +6092,7 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("Hide default icons").setDesc(
+    new import_obsidian9.Setting(containerEl).setName("Hide default icons").setDesc(
       "Hides all default folder arrows and file icons. Custom icons set via 'Change icon...' will still be shown."
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.hideDefaultIcons).onChange(async (value) => {
@@ -5868,7 +6100,7 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("Enable collapse indicators").setDesc(
+    new import_obsidian9.Setting(containerEl).setName("Enable collapse indicators").setDesc(
       "Show custom icons next to folders to indicate collapsed/expanded state."
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.enableCollapseIcons).onChange(async (value) => {
@@ -5877,20 +6109,20 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
       })
     );
     if (this.plugin.settings.enableCollapseIcons) {
-      new import_obsidian6.Setting(containerEl).setName("Collapsed folder icon").setDesc("Icon name for collapsed folders. Any Lucide icon name. Default: chevron-right").addText(
+      new import_obsidian9.Setting(containerEl).setName("Collapsed folder icon").setDesc("Icon name for collapsed folders. Any Lucide icon name. Default: chevron-right").addText(
         (text2) => text2.setPlaceholder("chevron-right").setValue(this.plugin.settings.collapseIcon).onChange(async (value) => {
           this.plugin.settings.collapseIcon = value;
           await this.plugin.saveSettings();
         })
       );
-      new import_obsidian6.Setting(containerEl).setName("Expanded folder icon").setDesc("Icon name for expanded folders. Any Lucide icon name. Default: chevron-down").addText(
+      new import_obsidian9.Setting(containerEl).setName("Expanded folder icon").setDesc("Icon name for expanded folders. Any Lucide icon name. Default: chevron-down").addText(
         (text2) => text2.setPlaceholder("chevron-down").setValue(this.plugin.settings.collapseIconExpanded).onChange(async (value) => {
           this.plugin.settings.collapseIconExpanded = value;
           await this.plugin.saveSettings();
         })
       );
     }
-    new import_obsidian6.Setting(containerEl).setName("Custom SVG icons folder").setDesc(
+    new import_obsidian9.Setting(containerEl).setName("Custom SVG icons folder").setDesc(
       "Path to a folder in your vault containing .svg files. Icons will appear in the icon search by filename. Leave empty to disable."
     ).addText(
       (text2) => text2.setPlaceholder("path/to/icons").setValue(this.plugin.settings.customIconsFolder).onChange(async (value) => {
@@ -5899,20 +6131,20 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
         refreshCustomIcons(this.app, value);
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("Rename files on double-click").setDesc("Double-click a file to rename it instead of opening it.").addToggle(
+    new import_obsidian9.Setting(containerEl).setName("Rename files on double-click").setDesc("Double-click a file to rename it instead of opening it.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.renameOnDoubleClickFiles).onChange(async (value) => {
         this.plugin.settings.renameOnDoubleClickFiles = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("Rename folders on double-click").setDesc("Double-click a folder to rename it.").addToggle(
+    new import_obsidian9.Setting(containerEl).setName("Rename folders on double-click").setDesc("Double-click a folder to rename it.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.renameOnDoubleClickFolders).onChange(async (value) => {
         this.plugin.settings.renameOnDoubleClickFolders = value;
         await this.plugin.saveSettings();
       })
     );
     containerEl.createEl("h3", { text: "Deletion" });
-    new import_obsidian6.Setting(containerEl).setName("Confirm before deleting").setDesc(
+    new import_obsidian9.Setting(containerEl).setName("Confirm before deleting").setDesc(
       "Show a confirmation dialog before deleting files and folders."
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.confirmDelete).onChange(async (value) => {
@@ -6089,10 +6321,17 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
         nameInput.value = "";
         renderSubmenus.call(this);
       };
+      renderSubmenuSections.call(this);
+    }
+    function renderSubmenuSections() {
+      const existing = submenuSection.querySelectorAll(".sn-submenu-section");
+      for (const el of existing)
+        el.remove();
       for (const [sectionName, entries] of Object.entries(this.plugin.settings.submenus)) {
-        if (entries.length === 0 && sectionName === "New") {
-        }
+        if (entries.length === 0 && sectionName === "New")
+          continue;
         const sectionDiv = submenuSection.createDiv();
+        sectionDiv.className = "sn-submenu-section";
         sectionDiv.style.marginBottom = "8px";
         sectionDiv.style.border = "1px solid var(--background-modifier-border)";
         sectionDiv.style.borderRadius = "4px";
@@ -6102,6 +6341,40 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
         headerRow.style.gap = "8px";
         headerRow.style.alignItems = "center";
         headerRow.style.marginBottom = "8px";
+        const sectionIconBtn = headerRow.createEl("button");
+        sectionIconBtn.style.width = "28px";
+        sectionIconBtn.style.height = "28px";
+        sectionIconBtn.style.display = "flex";
+        sectionIconBtn.style.alignItems = "center";
+        sectionIconBtn.style.justifyContent = "center";
+        sectionIconBtn.style.background = "transparent";
+        sectionIconBtn.style.border = "1px solid var(--background-modifier-border)";
+        sectionIconBtn.style.borderRadius = "4px";
+        sectionIconBtn.style.cursor = "pointer";
+        sectionIconBtn.style.color = "var(--text-muted)";
+        sectionIconBtn.style.flexShrink = "0";
+        sectionIconBtn.title = "Choose section icon";
+        const renderSectionIcon = () => {
+          sectionIconBtn.empty();
+          const icon = this.plugin.settings.submenuIcons[sectionName];
+          if (icon) {
+            setCustomIcon(sectionIconBtn, icon, this.app);
+          } else {
+            sectionIconBtn.setText("?");
+          }
+        };
+        renderSectionIcon();
+        sectionIconBtn.onclick = () => {
+          var _a;
+          new IconSuggestModal(this.app, (_a = this.plugin.settings.customIconsFolder) != null ? _a : "", (iconName) => {
+            this.plugin.settings.submenuIcons = {
+              ...this.plugin.settings.submenuIcons,
+              [sectionName]: iconName
+            };
+            renderSectionIcon();
+            this.plugin.saveSettings();
+          }).open();
+        };
         const headerTitle = headerRow.createEl("span");
         headerTitle.textContent = sectionName;
         headerTitle.style.fontWeight = "bold";
@@ -6118,21 +6391,31 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
           delete next[sectionName];
           this.plugin.settings.submenus = next;
           await this.plugin.saveSettings();
-          renderSubmenus.call(this);
+          renderSubmenuSections.call(this);
         };
         const entriesDiv = sectionDiv.createDiv();
         for (let i = 0; i < entries.length; i++) {
-          renderEntryRow.call(this, entriesDiv, entries, i, () => this.plugin.settings.submenus[sectionName]);
+          renderEntryRow.call(this, entriesDiv, entries, i, () => this.plugin.settings.submenus[sectionName], () => renderSubmenuSections.call(this));
         }
         const addEntryRow = sectionDiv.createDiv();
         addEntryRow.style.marginTop = "4px";
+        addEntryRow.style.display = "flex";
+        addEntryRow.style.gap = "8px";
         const addEntryBtn = addEntryRow.createEl("button");
         addEntryBtn.textContent = "+ Add command";
         addEntryBtn.onclick = async () => {
           entries.push({ label: "New command", commandId: "" });
           this.plugin.settings.submenus = { ...this.plugin.settings.submenus };
           await this.plugin.saveSettings();
-          renderSubmenus.call(this);
+          renderSubmenuSections.call(this);
+        };
+        const addSepBtn = addEntryRow.createEl("button");
+        addSepBtn.textContent = "+ Separator";
+        addSepBtn.onclick = async () => {
+          entries.push({ label: "", commandId: "", isSeparator: true });
+          this.plugin.settings.submenus = { ...this.plugin.settings.submenus };
+          await this.plugin.saveSettings();
+          renderSubmenuSections.call(this);
         };
       }
     }
@@ -6147,10 +6430,12 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
       mainDesc.empty();
       const list = this.plugin.settings.mainMenuCommands;
       for (let i = 0; i < list.length; i++) {
-        renderEntryRow.call(this, mainDesc, list, i, () => this.plugin.settings.mainMenuCommands);
+        renderEntryRow.call(this, mainDesc, list, i, () => this.plugin.settings.mainMenuCommands, () => renderMainCommands.call(this));
       }
       const addRow = mainDesc.createDiv();
       addRow.style.marginTop = "8px";
+      addRow.style.display = "flex";
+      addRow.style.gap = "8px";
       const addBtn = addRow.createEl("button");
       addBtn.textContent = "+ Add command";
       addBtn.onclick = async () => {
@@ -6161,13 +6446,81 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
         await this.plugin.saveSettings();
         renderMainCommands.call(this);
       };
+      const addSepBtn = addRow.createEl("button");
+      addSepBtn.textContent = "+ Separator";
+      addSepBtn.onclick = async () => {
+        this.plugin.settings.mainMenuCommands = [
+          ...this.plugin.settings.mainMenuCommands,
+          { label: "", commandId: "", isSeparator: true }
+        ];
+        await this.plugin.saveSettings();
+        renderMainCommands.call(this);
+      };
     }
-    function renderEntryRow(container, list, index, getList) {
+    function renderEntryRow(container, list, index, getList, onRemove) {
+      const entry = list[index];
+      const swap = (i, j) => {
+        const tmp = list[i];
+        list[i] = list[j];
+        list[j] = tmp;
+      };
+      const createMoveButtons = (row2) => {
+        const moveUp = row2.createEl("button");
+        moveUp.textContent = "\u25B2";
+        moveUp.style.cssText = "width:22px;height:22px;padding:0;border:1px solid var(--background-modifier-border);border-radius:3px;background:transparent;cursor:pointer;color:var(--text-muted);font-size:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;";
+        moveUp.title = "Move up";
+        moveUp.disabled = index === 0;
+        moveUp.onclick = async () => {
+          swap(index, index - 1);
+          await this.plugin.saveSettings();
+          if (onRemove)
+            onRemove();
+        };
+        const moveDown = row2.createEl("button");
+        moveDown.textContent = "\u25BC";
+        moveDown.style.cssText = moveUp.style.cssText;
+        moveDown.title = "Move down";
+        moveDown.disabled = index === list.length - 1;
+        moveDown.onclick = async () => {
+          swap(index, index + 1);
+          await this.plugin.saveSettings();
+          if (onRemove)
+            onRemove();
+        };
+      };
+      if (entry.isSeparator) {
+        const row2 = container.createDiv();
+        row2.style.display = "flex";
+        row2.style.gap = "8px";
+        row2.style.alignItems = "center";
+        row2.style.marginBottom = "4px";
+        createMoveButtons(row2);
+        const sepIcon = row2.createSpan();
+        sepIcon.style.cssText = "width:28px;height:28px;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--text-muted);";
+        sepIcon.textContent = "\u2014";
+        const sepLabel = row2.createEl("span");
+        sepLabel.textContent = "Separator";
+        sepLabel.style.cssText = "flex:1;color:var(--text-muted);font-size:12px;font-style:italic;";
+        const removeBtn2 = row2.createEl("button");
+        removeBtn2.textContent = "\xD7";
+        removeBtn2.style.cssText = "background:transparent;border:none;cursor:pointer;color:var(--text-muted);";
+        removeBtn2.onclick = async () => {
+          const updated = [...list.slice(0, index), ...list.slice(index + 1)];
+          for (let j = 0; j < updated.length; j++)
+            list[j] = updated[j];
+          list.length = updated.length;
+          await this.plugin.saveSettings();
+          if (onRemove)
+            onRemove();
+        };
+        return;
+      }
       const row = container.createDiv();
       row.style.display = "flex";
       row.style.gap = "8px";
       row.style.alignItems = "center";
       row.style.marginBottom = "4px";
+      createMoveButtons(row);
       const labelInput = row.createEl("input", { type: "text" });
       labelInput.value = list[index].label;
       labelInput.style.flex = "1";
@@ -6242,9 +6595,8 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
         }
         list.length = updated.length;
         await this.plugin.saveSettings();
-        renderSubmenus.call(this);
-        renderMainCommands.call(this);
-        renderArchived.call(this);
+        if (onRemove)
+          onRemove();
       };
       labelInput.onchange = async () => {
         list[index].label = labelInput.value;
@@ -6266,16 +6618,28 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
       newDesc.empty();
       const list = this.plugin.settings.newMenuCommands;
       for (let i = 0; i < list.length; i++) {
-        renderEntryRow.call(this, newDesc, list, i, () => this.plugin.settings.newMenuCommands);
+        renderEntryRow.call(this, newDesc, list, i, () => this.plugin.settings.newMenuCommands, () => renderNewCommands.call(this));
       }
       const addRow = newDesc.createDiv();
       addRow.style.marginTop = "8px";
+      addRow.style.display = "flex";
+      addRow.style.gap = "8px";
       const addBtn = addRow.createEl("button");
       addBtn.textContent = "+ Add command";
       addBtn.onclick = async () => {
         this.plugin.settings.newMenuCommands = [
           ...this.plugin.settings.newMenuCommands,
           { label: "New command", commandId: "" }
+        ];
+        await this.plugin.saveSettings();
+        renderNewCommands.call(this);
+      };
+      const addSepBtn = addRow.createEl("button");
+      addSepBtn.textContent = "+ Separator";
+      addSepBtn.onclick = async () => {
+        this.plugin.settings.newMenuCommands = [
+          ...this.plugin.settings.newMenuCommands,
+          { label: "", commandId: "", isSeparator: true }
         ];
         await this.plugin.saveSettings();
         renderNewCommands.call(this);
@@ -6288,7 +6652,12 @@ var SimpleNavigatorSettingTab = class extends import_obsidian6.PluginSettingTab 
 };
 
 // src/main.ts
-var SimpleNavigatorPlugin = class extends import_obsidian7.Plugin {
+init_icon_utils();
+var SimpleNavigatorPlugin = class extends import_obsidian10.Plugin {
+  constructor() {
+    super(...arguments);
+    this.lastClicked = null;
+  }
   async onload() {
     const rawData = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, rawData);
@@ -6299,6 +6668,7 @@ var SimpleNavigatorPlugin = class extends import_obsidian7.Plugin {
     }
     delete this.settings.customCommands;
     delete this.settings.customTemplates;
+    this.settings = cleanUpSettings(this.settings, this.app.vault);
     refreshCustomIcons(this.app, this.settings.customIconsFolder);
     this.registerView(SIMPLE_NAVIGATOR_VIEW, (leaf) => {
       return new SimpleNavigatorView(leaf, this);
@@ -6321,7 +6691,7 @@ var SimpleNavigatorPlugin = class extends import_obsidian7.Plugin {
       id: "collapse-all",
       name: "Collapse all folders",
       callback: async () => {
-        const allPaths = this.app.vault.getAllLoadedFiles().filter((f) => f instanceof import_obsidian7.TFolder).map((f) => f.path);
+        const allPaths = this.app.vault.getAllLoadedFiles().filter((f) => f instanceof import_obsidian10.TFolder).map((f) => f.path);
         this.settings = { ...this.settings, collapsedPaths: allPaths };
         await this.saveSettings();
       }
@@ -6338,6 +6708,71 @@ var SimpleNavigatorPlugin = class extends import_obsidian7.Plugin {
       this.activateView();
     });
     this.addSettingTab(new SimpleNavigatorSettingTab(this.app, this));
+  }
+  async onunload() {
+    const { clearIconCache: clearIconCache2 } = await Promise.resolve().then(() => (init_icon_utils(), icon_utils_exports));
+    clearIconCache2();
+  }
+  async moveOrderKey(oldPath, newPath) {
+    const orderMap = { ...this.settings.orderMap };
+    let changed = false;
+    if (oldPath in orderMap) {
+      orderMap[newPath] = orderMap[oldPath];
+      delete orderMap[oldPath];
+      changed = true;
+    }
+    const prefix = oldPath + "/";
+    const newPrefix = newPath + "/";
+    for (const key of Object.keys(orderMap)) {
+      if (key.startsWith(prefix)) {
+        orderMap[newPrefix + key.slice(prefix.length)] = orderMap[key];
+        delete orderMap[key];
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.settings = { ...this.settings, orderMap };
+      await this.saveSettings();
+    }
+  }
+  async setFolderOrder(folderPath, orderedNames) {
+    this.settings = {
+      ...this.settings,
+      orderMap: { ...this.settings.orderMap, [folderPath]: orderedNames }
+    };
+    await this.saveSettings();
+  }
+  getSortedChildren(folderPath) {
+    const folder = this.app.vault.getAbstractFileByPath(folderPath);
+    if (!folder || !(folder instanceof import_obsidian10.TFolder))
+      return [];
+    const hiddenSet = new Set(this.settings.hiddenPaths);
+    const archivedSet = new Set(this.settings.archivedPaths);
+    let children2 = folder.children.filter(
+      (child) => !hiddenSet.has(child.path) && !archivedSet.has(child.path)
+    );
+    const order = this.settings.orderMap[folderPath];
+    if (order && order.length > 0) {
+      const orderIndex = new Map(order.map((name, i) => [name, i]));
+      children2.sort((a, b) => {
+        const ai = orderIndex.get(a.name);
+        const bi = orderIndex.get(b.name);
+        if (ai !== void 0 && bi !== void 0)
+          return ai - bi;
+        if (ai !== void 0)
+          return -1;
+        if (bi !== void 0)
+          return 1;
+        return a.name.localeCompare(b.name);
+      });
+    } else {
+      children2.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return children2.map((child) => ({
+      name: child.name,
+      path: child.path,
+      type: child instanceof import_obsidian10.TFolder ? "folder" : "file"
+    }));
   }
   async saveSettings() {
     var _a, _b;
