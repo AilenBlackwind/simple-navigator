@@ -7,8 +7,8 @@ existing alternatives felt right. This one focuses on manual control over the
 tree: custom ordering, colors, icons, archived folders, and a configurable
 context menu.
 
-> Personal project. **No license is granted** — all rights reserved. The code is
-> in a private repository and is not licensed for redistribution or reuse.
+> Personal project, AI-assisted, in active development. A significant portion of
+> the functionality is not yet implemented and there are rough edges.
 
 ## Features
 
