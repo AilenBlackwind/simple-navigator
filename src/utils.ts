@@ -1,4 +1,4 @@
-import { App, TAbstractFile, TFile, TFolder, Vault, setIcon, normalizePath } from "obsidian";
+import { App, TAbstractFile, TFile, TFolder, Vault, normalizePath } from "obsidian";
 import { PluginSettings } from "./settings";
 
 export function sortWithOrder(
@@ -90,45 +90,10 @@ export function cleanUpSettings(
   settings: PluginSettings,
   vault: Vault
 ): PluginSettings {
-  const allPaths = new Set(vault.getAllLoadedFiles().map((f) => f.path));
-
-  for (const parentPath of Object.keys(settings.orderMap)) {
-    if (parentPath && !allPaths.has(parentPath)) {
-      delete settings.orderMap[parentPath];
-      continue;
-    }
-    settings.orderMap[parentPath] = settings.orderMap[parentPath].filter(
-      (name) => {
-        const fullPath = parentPath ? normalizePath(`${parentPath}/${name}`) : name;
-        return allPaths.has(fullPath);
-      }
-    );
-  }
-
-  settings.hiddenPaths = settings.hiddenPaths.filter((p) => allPaths.has(p));
-  settings.archivedPaths = settings.archivedPaths.filter((p) =>
-    allPaths.has(p)
-  );
-
-  // Archived folders should not have orderMap entries
+  // Archived folders should not have orderMap entries — this is safe
   for (const path of settings.archivedPaths) {
     delete settings.orderMap[path];
   }
-
-  for (const path of Object.keys(settings.colorMap)) {
-    if (!allPaths.has(path)) delete settings.colorMap[path];
-  }
-  for (const path of Object.keys(settings.iconMap)) {
-    if (!allPaths.has(path)) delete settings.iconMap[path];
-  }
-  for (const path of Object.keys(settings.folderCollapseIconMap)) {
-    if (!allPaths.has(path)) delete settings.folderCollapseIconMap[path];
-  }
-
-  settings.collapsedPaths = settings.collapsedPaths.filter((p) =>
-    allPaths.has(p)
-  );
-
   return settings;
 }
 
@@ -143,15 +108,6 @@ export function getVisibleExtSet(
   return exts.length > 0 ? new Set(exts) : null;
 }
 
-export const CUSTOM_ICON_PREFIX = "svg::";
-
-// Populated by refreshCustomIcons — maps svg::path → raw SVG content
-export const customSvgContent = new Map<string, string>();
-
-export function isCustomIcon(value: string): boolean {
-  return value.startsWith(CUSTOM_ICON_PREFIX);
-}
-
 export async function deleteFile(app: App, file: TAbstractFile): Promise<void> {
   const trashOption = app.vault.getConfig("trashOption");
   if (trashOption === "permanent") {
@@ -159,30 +115,4 @@ export async function deleteFile(app: App, file: TAbstractFile): Promise<void> {
   } else {
     await app.vault.trash(file, trashOption === "system");
   }
-}
-
-export function setCustomIcon(el: HTMLElement, value: string, app: App): void {
-  try {
-    el.innerHTML = "";
-    if (isCustomIcon(value)) {
-      const svg = customSvgContent.get(value);
-      if (svg) {
-        el.innerHTML = svg;
-        const svgEl = el.querySelector("svg");
-        if (svgEl) {
-          svgEl.style.width = "16px";
-          svgEl.style.height = "16px";
-        }
-        return;
-      }
-    }
-    el.style.display = "";
-    setIcon(el, value);
-    const svgEl = el.querySelector("svg");
-    if (svgEl) {
-      svgEl.style.width = "16px";
-      svgEl.style.height = "16px";
-      svgEl.style.strokeWidth = "2px";
-    }
-  } catch {}
 }

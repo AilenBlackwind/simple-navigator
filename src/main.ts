@@ -1,7 +1,8 @@
 import { Plugin, WorkspaceLeaf, TFolder, TAbstractFile } from "obsidian";
 import { SIMPLE_NAVIGATOR_VIEW, SimpleNavigatorView } from "./SimpleNavigatorView";
 import { PluginSettings, DEFAULT_SETTINGS, SimpleNavigatorSettingTab } from "./settings";
-import { refreshCustomIcons } from "./modal";
+import { refreshCustomIcons } from "./icon-utils";
+import { cleanUpSettings } from "./utils";
 
 export default class SimpleNavigatorPlugin extends Plugin {
   settings!: PluginSettings;
@@ -20,6 +21,8 @@ export default class SimpleNavigatorPlugin extends Plugin {
     // Remove old fields from in-memory settings
     delete (this.settings as any).customCommands;
     delete (this.settings as any).customTemplates;
+
+    this.settings = cleanUpSettings(this.settings, this.app.vault);
 
     refreshCustomIcons(this.app, this.settings.customIconsFolder);
 
@@ -71,6 +74,78 @@ export default class SimpleNavigatorPlugin extends Plugin {
     });
 
     this.addSettingTab(new SimpleNavigatorSettingTab(this.app, this));
+  }
+
+  async onunload() {
+    const { clearIconCache } = await import("./icon-utils");
+    clearIconCache();
+  }
+
+  async moveOrderKey(oldPath: string, newPath: string): Promise<void> {
+    const orderMap = { ...this.settings.orderMap };
+    let changed = false;
+
+    if (oldPath in orderMap) {
+      orderMap[newPath] = orderMap[oldPath];
+      delete orderMap[oldPath];
+      changed = true;
+    }
+
+    const prefix = oldPath + "/";
+    const newPrefix = newPath + "/";
+    for (const key of Object.keys(orderMap)) {
+      if (key.startsWith(prefix)) {
+        orderMap[newPrefix + key.slice(prefix.length)] = orderMap[key];
+        delete orderMap[key];
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      this.settings = { ...this.settings, orderMap };
+      await this.saveSettings();
+    }
+  }
+
+  async setFolderOrder(folderPath: string, orderedNames: string[]): Promise<void> {
+    this.settings = {
+      ...this.settings,
+      orderMap: { ...this.settings.orderMap, [folderPath]: orderedNames },
+    };
+    await this.saveSettings();
+  }
+
+  getSortedChildren(folderPath: string): { name: string; path: string; type: "file" | "folder" }[] {
+    const folder = this.app.vault.getAbstractFileByPath(folderPath);
+    if (!folder || !(folder instanceof TFolder)) return [];
+
+    const hiddenSet = new Set(this.settings.hiddenPaths);
+    const archivedSet = new Set(this.settings.archivedPaths);
+
+    let children = folder.children.filter(
+      (child) => !hiddenSet.has(child.path) && !archivedSet.has(child.path)
+    );
+
+    const order = this.settings.orderMap[folderPath];
+    if (order && order.length > 0) {
+      const orderIndex = new Map(order.map((name, i) => [name, i]));
+      children.sort((a, b) => {
+        const ai = orderIndex.get(a.name);
+        const bi = orderIndex.get(b.name);
+        if (ai !== undefined && bi !== undefined) return ai - bi;
+        if (ai !== undefined) return -1;
+        if (bi !== undefined) return 1;
+        return a.name.localeCompare(b.name);
+      });
+    } else {
+      children.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    return children.map((child) => ({
+      name: child.name,
+      path: child.path,
+      type: child instanceof TFolder ? "folder" : "file",
+    }));
   }
 
   async saveSettings() {

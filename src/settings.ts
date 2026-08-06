@@ -1,12 +1,13 @@
 import { PluginSettingTab, Setting, App, setIcon } from "obsidian";
-import { CommandSuggestModal, IconSuggestModal, FolderSuggestModal, refreshCustomIcons } from "./modal";
-import { setCustomIcon } from "./utils";
+import { CommandSuggestModal, IconSuggestModal, FolderSuggestModal } from "./modal";
+import { setCustomIcon, refreshCustomIcons } from "./icon-utils";
 import type SimpleNavigatorPlugin from "./main";
 
 export interface SubmenuEntry {
   label: string;
   commandId: string;
   icon?: string;
+  isSeparator?: boolean;
 }
 
 export interface PluginSettings {
@@ -29,6 +30,7 @@ export interface PluginSettings {
   renameOnDoubleClickFiles: boolean;
   renameOnDoubleClickFolders: boolean;
   submenus: Record<string, SubmenuEntry[]>;
+  submenuIcons: Record<string, string>;
   mainMenuCommands: SubmenuEntry[];
   newMenuCommands: SubmenuEntry[];
   customIconsFolder: string;
@@ -55,6 +57,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   renameOnDoubleClickFiles: false,
   renameOnDoubleClickFolders: false,
   submenus: {},
+  submenuIcons: {},
   mainMenuCommands: [],
   newMenuCommands: [],
   customIconsFolder: "",
@@ -434,6 +437,40 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
         headerRow.style.alignItems = "center";
         headerRow.style.marginBottom = "8px";
 
+        const sectionIconBtn = headerRow.createEl("button");
+        sectionIconBtn.style.width = "28px";
+        sectionIconBtn.style.height = "28px";
+        sectionIconBtn.style.display = "flex";
+        sectionIconBtn.style.alignItems = "center";
+        sectionIconBtn.style.justifyContent = "center";
+        sectionIconBtn.style.background = "transparent";
+        sectionIconBtn.style.border = "1px solid var(--background-modifier-border)";
+        sectionIconBtn.style.borderRadius = "4px";
+        sectionIconBtn.style.cursor = "pointer";
+        sectionIconBtn.style.color = "var(--text-muted)";
+        sectionIconBtn.style.flexShrink = "0";
+        sectionIconBtn.title = "Choose section icon";
+        const renderSectionIcon = () => {
+          sectionIconBtn.empty();
+          const icon = this.plugin.settings.submenuIcons[sectionName];
+          if (icon) {
+            setCustomIcon(sectionIconBtn, icon, this.app);
+          } else {
+            sectionIconBtn.setText("?");
+          }
+        };
+        renderSectionIcon();
+        sectionIconBtn.onclick = () => {
+          new IconSuggestModal(this.app, this.plugin.settings.customIconsFolder ?? "", (iconName) => {
+            this.plugin.settings.submenuIcons = {
+              ...this.plugin.settings.submenuIcons,
+              [sectionName]: iconName,
+            };
+            renderSectionIcon();
+            this.plugin.saveSettings();
+          }).open();
+        };
+
         const headerTitle = headerRow.createEl("span");
         headerTitle.textContent = sectionName;
         headerTitle.style.fontWeight = "bold";
@@ -462,11 +499,22 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
 
         const addEntryRow = sectionDiv.createDiv();
         addEntryRow.style.marginTop = "4px";
+        addEntryRow.style.display = "flex";
+        addEntryRow.style.gap = "8px";
 
         const addEntryBtn = addEntryRow.createEl("button");
         addEntryBtn.textContent = "+ Add command";
         addEntryBtn.onclick = async () => {
           entries.push({ label: "New command", commandId: "" });
+          this.plugin.settings.submenus = { ...this.plugin.settings.submenus };
+          await this.plugin.saveSettings();
+          renderSubmenuSections.call(this);
+        };
+
+        const addSepBtn = addEntryRow.createEl("button");
+        addSepBtn.textContent = "+ Separator";
+        addSepBtn.onclick = async () => {
+          entries.push({ label: "", commandId: "", isSeparator: true });
           this.plugin.settings.submenus = { ...this.plugin.settings.submenus };
           await this.plugin.saveSettings();
           renderSubmenuSections.call(this);
@@ -494,6 +542,8 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
 
       const addRow = mainDesc.createDiv();
       addRow.style.marginTop = "8px";
+      addRow.style.display = "flex";
+      addRow.style.gap = "8px";
 
       const addBtn = addRow.createEl("button");
       addBtn.textContent = "+ Add command";
@@ -505,20 +555,93 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         renderMainCommands.call(this);
       };
+
+      const addSepBtn = addRow.createEl("button");
+      addSepBtn.textContent = "+ Separator";
+      addSepBtn.onclick = async () => {
+        this.plugin.settings.mainMenuCommands = [
+          ...this.plugin.settings.mainMenuCommands,
+          { label: "", commandId: "", isSeparator: true },
+        ];
+        await this.plugin.saveSettings();
+        renderMainCommands.call(this);
+      };
     }
 
     function renderEntryRow(
       container: HTMLElement,
-      list: { label: string; commandId: string; icon?: string }[],
+      list: { label: string; commandId: string; icon?: string; isSeparator?: boolean }[],
       index: number,
-      getList: () => { label: string; commandId: string; icon?: string }[],
+      getList: () => { label: string; commandId: string; icon?: string; isSeparator?: boolean }[],
       onRemove?: () => void
     ) {
+      const entry = list[index];
+
+      const swap = (i: number, j: number) => {
+        const tmp = list[i];
+        list[i] = list[j];
+        list[j] = tmp;
+      };
+
+      const createMoveButtons = (row: HTMLElement) => {
+        const moveUp = row.createEl("button");
+        moveUp.textContent = "▲";
+        moveUp.style.cssText = "width:22px;height:22px;padding:0;border:1px solid var(--background-modifier-border);border-radius:3px;background:transparent;cursor:pointer;color:var(--text-muted);font-size:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;";
+        moveUp.title = "Move up";
+        moveUp.disabled = index === 0;
+        moveUp.onclick = async () => {
+          swap(index, index - 1);
+          await this.plugin.saveSettings();
+          if (onRemove) onRemove();
+        };
+
+        const moveDown = row.createEl("button");
+        moveDown.textContent = "▼";
+        moveDown.style.cssText = moveUp.style.cssText;
+        moveDown.title = "Move down";
+        moveDown.disabled = index === list.length - 1;
+        moveDown.onclick = async () => {
+          swap(index, index + 1);
+          await this.plugin.saveSettings();
+          if (onRemove) onRemove();
+        };
+      };
+
+      if (entry.isSeparator) {
+        const row = container.createDiv();
+        row.style.display = "flex";
+        row.style.gap = "8px";
+        row.style.alignItems = "center";
+        row.style.marginBottom = "4px";
+        createMoveButtons(row);
+
+        const sepIcon = row.createSpan();
+        sepIcon.style.cssText = "width:28px;height:28px;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--text-muted);";
+        sepIcon.textContent = "—";
+
+        const sepLabel = row.createEl("span");
+        sepLabel.textContent = "Separator";
+        sepLabel.style.cssText = "flex:1;color:var(--text-muted);font-size:12px;font-style:italic;";
+
+        const removeBtn = row.createEl("button");
+        removeBtn.textContent = "×";
+        removeBtn.style.cssText = "background:transparent;border:none;cursor:pointer;color:var(--text-muted);";
+        removeBtn.onclick = async () => {
+          const updated = [...list.slice(0, index), ...list.slice(index + 1)];
+          for (let j = 0; j < updated.length; j++) list[j] = updated[j];
+          list.length = updated.length;
+          await this.plugin.saveSettings();
+          if (onRemove) onRemove();
+        };
+        return;
+      }
+
       const row = container.createDiv();
       row.style.display = "flex";
       row.style.gap = "8px";
       row.style.alignItems = "center";
       row.style.marginBottom = "4px";
+      createMoveButtons(row);
 
       const labelInput = row.createEl("input", { type: "text" });
       labelInput.value = list[index].label;
@@ -630,6 +753,8 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
 
       const addRow = newDesc.createDiv();
       addRow.style.marginTop = "8px";
+      addRow.style.display = "flex";
+      addRow.style.gap = "8px";
 
       const addBtn = addRow.createEl("button");
       addBtn.textContent = "+ Add command";
@@ -637,6 +762,17 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
         this.plugin.settings.newMenuCommands = [
           ...this.plugin.settings.newMenuCommands,
           { label: "New command", commandId: "" },
+        ];
+        await this.plugin.saveSettings();
+        renderNewCommands.call(this);
+      };
+
+      const addSepBtn = addRow.createEl("button");
+      addSepBtn.textContent = "+ Separator";
+      addSepBtn.onclick = async () => {
+        this.plugin.settings.newMenuCommands = [
+          ...this.plugin.settings.newMenuCommands,
+          { label: "", commandId: "", isSeparator: true },
         ];
         await this.plugin.saveSettings();
         renderNewCommands.call(this);

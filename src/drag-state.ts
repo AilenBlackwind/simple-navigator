@@ -290,6 +290,7 @@ export function resolveDropTarget(x: number, y: number): DropTarget | null {
         return { itemEl: child, containerPath, newIndex: -1, targetFolder: child.dataset.path || null };
       }
 
+      // Files (non-folders) should have no dead zone — always snap to above/below
       const fileEdge = cr.height * 0.25;
       if (y <= cr.top + fileEdge) {
         return { itemEl: child, containerPath, newIndex: i, targetFolder: null };
@@ -297,11 +298,7 @@ export function resolveDropTarget(x: number, y: number): DropTarget | null {
       if (y >= cr.bottom - fileEdge) {
         return { itemEl: child, containerPath, newIndex: i + 1, targetFolder: null };
       }
-      const ccFolderEl = container.closest(".nav-folder") as HTMLElement;
-        if (ccFolderEl && ccFolderEl.dataset.path && ccFolderEl.dataset.path !== dragState.itemPath && !dragState.batchPaths.includes(ccFolderEl.dataset.path)) {
-          return { itemEl: ccFolderEl, containerPath, newIndex: -1, targetFolder: containerPath };
-        }
-        return { itemEl: child, containerPath, newIndex: i, targetFolder: null };
+      return { itemEl: child, containerPath, newIndex: i, targetFolder: null };
       }
     }
 

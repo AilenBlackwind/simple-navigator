@@ -10,6 +10,7 @@ export class SimpleNavigatorView extends ItemView {
   private showHidden: boolean;
   private vaultRefs: EventRef[] = [];
   refreshKey = 0;
+  private bumpRaf: number | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: SimpleNavigatorPlugin) {
     super(leaf);
@@ -57,11 +58,10 @@ export class SimpleNavigatorView extends ItemView {
       },
     });
 
-    let bumpRaf: number | null = null;
     const bump = () => {
-      if (bumpRaf) return;
-      bumpRaf = requestAnimationFrame(() => {
-        bumpRaf = null;
+      if (this.bumpRaf) return;
+      this.bumpRaf = requestAnimationFrame(() => {
+        this.bumpRaf = null;
         this.refreshKey++;
         this.component?.$set({ refreshKey: this.refreshKey });
       });
@@ -75,6 +75,10 @@ export class SimpleNavigatorView extends ItemView {
   }
 
   async onClose() {
+    if (this.bumpRaf !== null) {
+      cancelAnimationFrame(this.bumpRaf);
+      this.bumpRaf = null;
+    }
     for (const ref of this.vaultRefs) {
       this.app.vault.offref(ref);
     }

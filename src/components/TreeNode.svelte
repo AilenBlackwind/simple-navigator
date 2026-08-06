@@ -1,10 +1,12 @@
 <script lang="ts">
   import { TFile, TFolder, setIcon, Menu, normalizePath } from "obsidian";
   import type { App, TAbstractFile } from "obsidian";
-  import { sortWithOrder, defaultSortFn, countFiles, getFileIcon, getVisibleExtSet, setCustomIcon, deleteFile } from "../utils";
+  import { sortWithOrder, defaultSortFn, countFiles, getFileIcon, getVisibleExtSet, deleteFile } from "../utils";
+  import { setCustomIcon } from "../icon-utils";
   import { dragState, createDropIndicator, updateDropIndicator, removeDropIndicator, destroyDropIndicator, clearFolderHighlight, highlightFolder, resolveDropTarget, updatePathsOnMove, updateAutoScroll } from "../drag-state";
   import type { PluginSettings } from "../settings";
-  import { IconSuggestModal, showConfirmModal } from "../modal";
+  import { IconSuggestModal } from "../modal";
+import { showConfirmModal } from "../confirm-modal";
 
   export let app: App;
   export let file: TAbstractFile;
@@ -120,6 +122,10 @@
   $: isMultiSelected = selectedPaths.size > 1 && selectedPaths.has(file.path);
   $: targetPaths = isMultiSelected ? Array.from(selectedPaths) : [file.path];
 
+  function handleMiddleMouseDown(e: MouseEvent) {
+    if (e.button === 1) e.preventDefault();
+  }
+
   function handleAuxClick(e: MouseEvent) {
     if (e.button !== 1) return;
     e.preventDefault();
@@ -210,14 +216,53 @@
   }
 
   async function duplicateFolderRecursive(src: TFolder, destPath: string): Promise<void> {
-    await app.vault.createFolder(destPath);
-    for (const child of src.children) {
-      if (child instanceof TFile) {
-        await app.vault.copy(child, normalizePath(`${destPath}/${child.name}`));
-      } else if (child instanceof TFolder) {
-        await duplicateFolderRecursive(child, normalizePath(`${destPath}/${child.name}`));
+    const foldersToCreate: string[] = [];
+    const filesToCopy: { src: TFile; dest: string }[] = [];
+
+    function collect(s: TFolder, d: string) {
+      foldersToCreate.push(d);
+      for (const child of s.children) {
+        const childDest = normalizePath(`${d}/${child.name}`);
+        if (child instanceof TFile) {
+          filesToCopy.push({ src: child, dest: childDest });
+        } else if (child instanceof TFolder) {
+          collect(child, childDest);
+        }
       }
     }
+    collect(src, destPath);
+
+    for (const fp of foldersToCreate) {
+      await app.vault.createFolder(fp);
+    }
+
+    const batchSize = 10;
+    for (let i = 0; i < filesToCopy.length; i += batchSize) {
+      const batch = filesToCopy.slice(i, i + batchSize);
+      const results = await Promise.allSettled(batch.map((f) => app.vault.copy(f.src, f.dest)));
+      for (const r of results) {
+        if (r.status === "rejected") {
+          console.error("Duplicate file failed:", r.reason);
+        }
+      }
+    }
+  }
+
+  async function duplicateFile(file: TFile): Promise<TFile | null> {
+    const parentPath = file.parent?.path || "";
+    const ext = file.extension;
+    const baseName = file.name.slice(0, -(ext.length + 1));
+    let newName = `${baseName} (copy).${ext}`;
+    let newPath = parentPath ? normalizePath(`${parentPath}/${newName}`) : newName;
+    let counter = 1;
+    while (app.vault.getAbstractFileByPath(newPath)) {
+      newName = `${baseName} (copy ${counter}).${ext}`;
+      newPath = parentPath ? normalizePath(`${parentPath}/${newName}`) : newName;
+      counter++;
+    }
+    await app.vault.copy(file, newPath);
+    const result = app.vault.getAbstractFileByPath(newPath);
+    return result instanceof TFile ? result : null;
   }
 
   const COLOR_PRESETS: { label: string; value: string }[] = [
@@ -245,6 +290,7 @@
     event.stopPropagation();
 
     const menu = new Menu();
+    const pluginInstance = () => (app as any).plugins.plugins['simple-navigator'];
 
     if (isFolder) {
       menu.addItem((item) =>
@@ -271,7 +317,6 @@
             await app.vault.createFolder(path);
           })
       );
-      const pluginInstance = () => (app as any).plugins.plugins['simple-navigator'];
       if (settings.newMenuCommands && settings.newMenuCommands.length > 0) {
         menu.addItem((item) => {
           item.setTitle("New...").setIcon("plus-circle");
@@ -306,7 +351,22 @@
                 newPath = parentPath ? normalizePath(`${parentPath}/${newName}`) : newName;
                 counter++;
               }
-              await duplicateFolderRecursive(file, newPath);
+              try {
+                await duplicateFolderRecursive(file, newPath);
+                const srcPrefix = file.path + "/";
+                const orderMap = { ...settings.orderMap };
+                for (const [key, val] of Object.entries(settings.orderMap)) {
+                  if (key === file.path) {
+                    orderMap[newPath] = [...val];
+                  } else if (key.startsWith(srcPrefix)) {
+                    orderMap[newPath + key.slice(srcPrefix.length - 1)] = [...val];
+                  }
+                }
+                settings = { ...settings, orderMap };
+                await onUpdateSettings(settings);
+              } catch (e) {
+                console.error("Duplicate folder error:", e);
+              }
             }
           })
       );
@@ -345,7 +405,11 @@
           .setIcon("copy")
           .onClick(async () => {
             if (file instanceof TFile) {
-              await app.fileManager.duplicateFile(file);
+              try {
+                await duplicateFile(file);
+              } catch (e) {
+                console.error("Duplicate file error:", e);
+              }
             }
           })
       );
@@ -584,29 +648,36 @@
       });
     }
 
-    for (const [sectionName, entries] of Object.entries(settings.submenus)) {
-      if (entries.length === 0) continue;
-      menu.addItem((item) => {
-        item.setTitle(sectionName).setIcon("terminal");
-        const sub = item.setSubmenu();
-        for (const cmd of entries) {
-          if (!cmd.commandId) continue;
-          sub.addItem((s) => {
-            s.setTitle(cmd.label);
-            if (cmd.icon) s.setIcon(cmd.icon);
-            s.onClick(() => {
-              const p = pluginInstance();
-              if (p) p.lastClicked = file;
-              app.commands.executeCommandById(cmd.commandId);
+    const submenuEntries = Object.entries(settings.submenus).filter(([, e]) => e.length > 0);
+    if (submenuEntries.length > 0) {
+      menu.addSeparator();
+      for (const [sectionName, entries] of submenuEntries) {
+        menu.addItem((item) => {
+          item.setTitle(sectionName);
+          const icon = settings.submenuIcons?.[sectionName];
+          if (icon) item.setIcon(icon);
+          const sub = item.setSubmenu();
+          for (const cmd of entries) {
+            if (cmd.isSeparator) { sub.addSeparator(); continue; }
+            if (!cmd.commandId) continue;
+            sub.addItem((s) => {
+              s.setTitle(cmd.label);
+              if (cmd.icon) s.setIcon(cmd.icon);
+              s.onClick(() => {
+                const p = pluginInstance();
+                if (p) p.lastClicked = file;
+                app.commands.executeCommandById(cmd.commandId);
+              });
             });
-          });
-        }
-      });
+          }
+        });
+      }
+      menu.addSeparator();
     }
 
     if (settings.mainMenuCommands.length > 0) {
-      menu.addSeparator();
       for (const cmd of settings.mainMenuCommands) {
+        if (cmd.isSeparator) { menu.addSeparator(); continue; }
         if (!cmd.commandId) continue;
         menu.addItem((s) => {
           s.setTitle(cmd.label);
@@ -747,6 +818,8 @@
       class="nav-folder-title"
       draggable="true"
       on:click={handleClick}
+      on:auxclick={handleAuxClick}
+      on:mousedown={handleMiddleMouseDown}
       on:dblclick={handleDblClick}
       on:contextmenu={handleContextMenu}
       on:dragstart={handleDragStart}
@@ -796,6 +869,7 @@
       draggable="true"
       on:click={handleClick}
       on:auxclick={handleAuxClick}
+      on:mousedown={handleMiddleMouseDown}
       on:dblclick={handleDblClick}
       on:contextmenu={handleContextMenu}
       on:dragstart={handleDragStart}

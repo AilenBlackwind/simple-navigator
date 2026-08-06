@@ -7,8 +7,8 @@ existing alternatives felt right. This one focuses on manual control over the
 tree: custom ordering, colors, icons, archived folders, and a configurable
 context menu.
 
-> Personal project. **No license is granted** — all rights reserved. The code is
-> in a private repository and is not licensed for redistribution or reuse.
+> Personal project, AI-assisted, in active development. A significant portion of
+> the functionality is not yet implemented and there are rough edges.
 
 ## Features
 
@@ -112,6 +112,18 @@ function walk(path, depth) {
 }
 walk("", 0);
 ```
+
+### `plugin.setFolderOrder(folderPath: string, orderedNames: string[]): Promise<void>`
+
+Sets the custom order for a folder's children and persists it. Useful when an
+external script renames items and needs to update the order map to match.
+
+```ts
+// After renaming children to "1. A", "2. B"...
+await plugin.setFolderOrder(folderPath, ["1. A", "2. B"]);
+```
+
+The tree re-renders automatically after saving.
 
 ### `plugin.settings: PluginSettings`
 

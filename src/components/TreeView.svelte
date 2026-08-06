@@ -5,7 +5,7 @@
   import { sortWithOrder, deleteFile } from "../utils";
   import { dragState, createDropIndicator, updateDropIndicator, removeDropIndicator, destroyDropIndicator, clearFolderHighlight, highlightFolder, resolveDropTarget, updatePathsOnMove, updateAutoScroll, DROP_ZONE_BUFFER } from "../drag-state";
   import type { PluginSettings } from "../settings";
-  import { showConfirmModal } from "../modal";
+  import { showConfirmModal } from "../confirm-modal";
 
   export let app: App;
   export let rootFolder: TFolder;
@@ -384,28 +384,34 @@
         }
       });
     }
-    for (const [sectionName, entries] of Object.entries(settings.submenus)) {
-      if (entries.length === 0) continue;
-      menu.addItem((item) => {
-        item.setTitle(sectionName).setIcon("terminal");
-        const sub = item.setSubmenu();
-        for (const cmd of entries) {
-          if (!cmd.commandId) continue;
-          sub.addItem((s) => {
-            s.setTitle(cmd.label);
-            if (cmd.icon) s.setIcon(cmd.icon);
-            s.onClick(() => {
-              const p = (app as any).plugins.plugins['simple-navigator'];
-              if (p) p.lastClicked = null;
-              app.commands.executeCommandById(cmd.commandId);
+    const submenuEntries = Object.entries(settings.submenus).filter(([, e]) => e.length > 0);
+    if (submenuEntries.length > 0) {
+      menu.addSeparator();
+      for (const [sectionName, entries] of submenuEntries) {
+        menu.addItem((item) => {
+          item.setTitle(sectionName);
+          const icon = settings.submenuIcons?.[sectionName];
+          if (icon) item.setIcon(icon);
+          const sub = item.setSubmenu();
+          for (const cmd of entries) {
+            if (cmd.isSeparator) { sub.addSeparator(); continue; }
+            if (!cmd.commandId) continue;
+            sub.addItem((s) => {
+              s.setTitle(cmd.label);
+              if (cmd.icon) s.setIcon(cmd.icon);
+              s.onClick(() => {
+                const p = (app as any).plugins.plugins['simple-navigator'];
+                if (p) p.lastClicked = null;
+                app.commands.executeCommandById(cmd.commandId);
+              });
             });
-          });
-        }
-      });
+          }
+        });
+      }
+      menu.addSeparator();
     }
 
     if (settings.mainMenuCommands.length > 0) {
-      menu.addSeparator();
       for (const cmd of settings.mainMenuCommands) {
         if (!cmd.commandId) continue;
         menu.addItem((s) => {
@@ -492,6 +498,13 @@
     if (rootContextHandler) {
       document.removeEventListener("contextmenu", rootContextHandler);
     }
+    destroyDropIndicator();
+    document.body.classList.remove("sn-is-dragging");
+    dragState.fromPath = "";
+    dragState.itemPath = "";
+    dragState.batchPaths = [];
+    dragState.targetFolder = null;
+    dragState.toPath = "";
   });
 </script>
 
