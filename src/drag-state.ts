@@ -9,6 +9,7 @@ export const dragState: {
   newIndex: number;
   lastDropTime: number;
   batchPaths: string[];
+  linkTarget: string | null;
 } = {
   fromPath: "",
   itemPath: "",
@@ -18,6 +19,7 @@ export const dragState: {
   newIndex: -1,
   lastDropTime: 0,
   batchPaths: [],
+  linkTarget: null,
 };
 
 let dropIndicatorEl: HTMLDivElement | null = null;
@@ -141,6 +143,21 @@ export function destroyDropIndicator() {
     dropIndicatorEl.remove();
     dropIndicatorEl = null;
   }
+}
+
+let linkTargetEl: HTMLElement | null = null;
+
+export function clearLinkTargetHighlight() {
+  if (linkTargetEl) {
+    linkTargetEl.classList.remove("sn-link-target");
+    linkTargetEl = null;
+  }
+}
+
+export function highlightLinkTarget(el: HTMLElement) {
+  clearLinkTargetHighlight();
+  linkTargetEl = el;
+  el.classList.add("sn-link-target");
 }
 
 export function computeNewIndex(target: HTMLElement, y: number): number {

@@ -1027,6 +1027,35 @@ async function deleteFile(app, file) {
     await app.vault.trash(file, trashOption === "system");
   }
 }
+async function appendWikiLinksToNote(app, targetPath, itemPaths) {
+  const target = app.vault.getAbstractFileByPath(targetPath);
+  if (!(target instanceof import_obsidian.TFile))
+    return;
+  const dragged = new Set(itemPaths);
+  if (dragged.has(targetPath))
+    return;
+  const links = itemPaths.map((p) => app.vault.getAbstractFileByPath(p)).filter((f) => f instanceof import_obsidian.TFile && f.path !== targetPath).map((f) => `[[${f.basename}]]`);
+  if (links.length === 0)
+    return;
+  const text2 = links.join("\n") + "\n";
+  const openView = app.workspace.getLeavesOfType("markdown").map((leaf) => leaf.view).find((v) => {
+    var _a;
+    return v instanceof import_obsidian.MarkdownView && ((_a = v.file) == null ? void 0 : _a.path) === targetPath;
+  });
+  if (openView && openView.editor) {
+    const editor = openView.editor;
+    const lastLine = editor.lastLine();
+    const ch = editor.getLine(lastLine).length;
+    const prefix = ch > 0 ? "\n" : "";
+    editor.replaceRange(prefix + text2, { line: lastLine, ch });
+    return;
+  }
+  let content = await app.vault.read(target);
+  if (content.length > 0 && !content.endsWith("\n"))
+    content += "\n";
+  content += text2;
+  await app.vault.modify(target, content);
+}
 
 // src/components/TreeNode.svelte
 init_icon_utils();
@@ -1041,7 +1070,8 @@ var dragState = {
   toPath: "",
   newIndex: -1,
   lastDropTime: 0,
-  batchPaths: []
+  batchPaths: [],
+  linkTarget: null
 };
 var dropIndicatorEl = null;
 var _lastHighlightAt = 0;
@@ -1161,6 +1191,18 @@ function destroyDropIndicator() {
     dropIndicatorEl.remove();
     dropIndicatorEl = null;
   }
+}
+var linkTargetEl = null;
+function clearLinkTargetHighlight() {
+  if (linkTargetEl) {
+    linkTargetEl.classList.remove("sn-link-target");
+    linkTargetEl = null;
+  }
+}
+function highlightLinkTarget(el) {
+  clearLinkTargetHighlight();
+  linkTargetEl = el;
+  el.classList.add("sn-link-target");
 }
 function computeNewIndex(target, y) {
   const parent = target.parentElement;
@@ -4252,6 +4294,10 @@ function handleMiddleMouseDown(e) {
   if (e.button === 1)
     e.preventDefault();
 }
+function findNoteUnderPointer(x, y) {
+  const el = document.elementFromPoint(x, y);
+  return el ? el.closest(".nav-file") : null;
+}
 function instance($$self, $$props, $$invalidate) {
   let isFolder;
   let isArchived;
@@ -4869,8 +4915,23 @@ function instance($$self, $$props, $$invalidate) {
   }
   function handleDragOver(e) {
     e.stopPropagation();
-    e.dataTransfer.dropEffect = "move";
     updateAutoScroll(e.clientY);
+    if (e.ctrlKey) {
+      const noteEl = findNoteUnderPointer(e.clientX, e.clientY);
+      if (noteEl && noteEl.dataset.path !== dragState.itemPath && !dragState.batchPaths.includes(noteEl.dataset.path)) {
+        dragState.linkTarget = noteEl.dataset.path;
+        dragState.toPath = "";
+        dragState.targetFolder = null;
+        dragState.newIndex = -1;
+        e.dataTransfer.dropEffect = "copy";
+        removeDropIndicator();
+        highlightLinkTarget(noteEl);
+        return;
+      }
+    }
+    dragState.linkTarget = null;
+    clearLinkTargetHighlight();
+    e.dataTransfer.dropEffect = "move";
     const target = resolveDropTarget(e.clientX, e.clientY);
     if (!target) {
       clearFolderHighlight();
@@ -4903,8 +4964,22 @@ function instance($$self, $$props, $$invalidate) {
     dragState.lastDropTime = Date.now();
     e.stopPropagation();
     destroyDropIndicator();
+    clearLinkTargetHighlight();
     if (!dragState.itemPath)
       return;
+    if (e.ctrlKey && dragState.linkTarget) {
+      e.preventDefault();
+      const targetPath = dragState.linkTarget;
+      const items = dragState.batchPaths.length > 0 ? dragState.batchPaths : [dragState.itemPath];
+      dragState.itemPath = "";
+      dragState.fromPath = "";
+      dragState.batchPaths = [];
+      dragState.linkTarget = null;
+      document.body.classList.remove("sn-is-dragging");
+      appendWikiLinksToNote(app, targetPath, items).catch((err) => console.error("SN append links failed:", err));
+      return;
+    }
+    dragState.linkTarget = null;
     const fromPath = dragState.fromPath;
     const itemPath = dragState.itemPath;
     const oldIndex = dragState.oldIndex;
@@ -4938,9 +5013,13 @@ function instance($$self, $$props, $$invalidate) {
     if (related && target.contains(related))
       return;
     clearFolderHighlight();
+    clearLinkTargetHighlight();
+    dragState.linkTarget = null;
   }
   function handleDragEnd(e) {
     destroyDropIndicator();
+    clearLinkTargetHighlight();
+    dragState.linkTarget = null;
     document.body.classList.remove("sn-is-dragging");
     dragState.batchPaths = [];
   }
@@ -5743,11 +5822,13 @@ function instance2($$self, $$props, $$invalidate) {
     document.body.classList.remove("sn-is-dragging");
     destroyDropIndicator();
     clearFolderHighlight(true);
+    clearLinkTargetHighlight();
     dragState.itemPath = "";
     dragState.fromPath = "";
     dragState.batchPaths = [];
     dragState.targetFolder = null;
     dragState.toPath = "";
+    dragState.linkTarget = null;
   }
   function handleWindowDrop(e) {
     if (!dragState.itemPath)

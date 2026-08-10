@@ -1,9 +1,9 @@
 <script lang="ts">
   import { TFile, TFolder, setIcon, Menu, normalizePath } from "obsidian";
   import type { App, TAbstractFile } from "obsidian";
-  import { sortWithOrder, defaultSortFn, countFiles, getFileIcon, getVisibleExtSet, deleteFile } from "../utils";
+  import { sortWithOrder, defaultSortFn, countFiles, getFileIcon, getVisibleExtSet, deleteFile, appendWikiLinksToNote } from "../utils";
   import { setCustomIcon } from "../icon-utils";
-  import { dragState, createDropIndicator, updateDropIndicator, removeDropIndicator, destroyDropIndicator, clearFolderHighlight, highlightFolder, resolveDropTarget, updatePathsOnMove, updateAutoScroll } from "../drag-state";
+  import { dragState, createDropIndicator, updateDropIndicator, removeDropIndicator, destroyDropIndicator, clearFolderHighlight, highlightFolder, resolveDropTarget, updatePathsOnMove, updateAutoScroll, highlightLinkTarget, clearLinkTargetHighlight } from "../drag-state";
   import type { PluginSettings } from "../settings";
   import { IconSuggestModal, MoveToModal } from "../modal";
 import { showConfirmModal } from "../confirm-modal";
@@ -759,9 +759,27 @@ import { showConfirmModal } from "../confirm-modal";
 
   function handleDragOver(e: DragEvent) {
     e.stopPropagation();
-    e.dataTransfer!.dropEffect = "move";
     updateAutoScroll(e.clientY);
 
+    // Ctrl held + cursor over a note -> link-insert mode: highlight the target
+    // note instead of showing move indicators.
+    if (e.ctrlKey) {
+      const noteEl = findNoteUnderPointer(e.clientX, e.clientY);
+      if (noteEl && noteEl.dataset.path !== dragState.itemPath && !dragState.batchPaths.includes(noteEl.dataset.path)) {
+        dragState.linkTarget = noteEl.dataset.path;
+        dragState.toPath = "";
+        dragState.targetFolder = null;
+        dragState.newIndex = -1;
+        e.dataTransfer!.dropEffect = "copy";
+        removeDropIndicator();
+        highlightLinkTarget(noteEl);
+        return;
+      }
+    }
+
+    dragState.linkTarget = null;
+    clearLinkTargetHighlight();
+    e.dataTransfer!.dropEffect = "move";
     const target = resolveDropTarget(e.clientX, e.clientY);
     if (!target) { clearFolderHighlight(); removeDropIndicator(); return; }
 
@@ -790,12 +808,33 @@ import { showConfirmModal } from "../confirm-modal";
     }
   }
 
+  function findNoteUnderPointer(x: number, y: number): HTMLElement | null {
+    const el = document.elementFromPoint(x, y);
+    return el ? el.closest(".nav-file") : null;
+  }
+
   function handleDrop(e: DragEvent) {
     dragState.lastDropTime = Date.now();
     e.stopPropagation();
     destroyDropIndicator();
+    clearLinkTargetHighlight();
 
     if (!dragState.itemPath) return;
+
+    if (e.ctrlKey && dragState.linkTarget) {
+      e.preventDefault();
+      const targetPath = dragState.linkTarget;
+      const items = dragState.batchPaths.length > 0 ? dragState.batchPaths : [dragState.itemPath];
+      dragState.itemPath = "";
+      dragState.fromPath = "";
+      dragState.batchPaths = [];
+      dragState.linkTarget = null;
+      document.body.classList.remove("sn-is-dragging");
+      appendWikiLinksToNote(app, targetPath, items).catch((err) => console.error("SN append links failed:", err));
+      return;
+    }
+
+    dragState.linkTarget = null;
 
     const fromPath = dragState.fromPath;
     const itemPath = dragState.itemPath;
@@ -818,10 +857,14 @@ import { showConfirmModal } from "../confirm-modal";
     const related = e.relatedTarget as HTMLElement | null;
     if (related && target.contains(related)) return;
     clearFolderHighlight();
+    clearLinkTargetHighlight();
+    dragState.linkTarget = null;
   }
 
   function handleDragEnd(e: DragEvent) {
     destroyDropIndicator();
+    clearLinkTargetHighlight();
+    dragState.linkTarget = null;
     document.body.classList.remove("sn-is-dragging");
     dragState.batchPaths = [];
   }

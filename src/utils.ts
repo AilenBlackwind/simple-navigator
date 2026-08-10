@@ -1,4 +1,4 @@
-import { App, TAbstractFile, TFile, TFolder, Vault, normalizePath } from "obsidian";
+import { App, TAbstractFile, TFile, TFolder, Vault, MarkdownView, normalizePath } from "obsidian";
 import { PluginSettings } from "./settings";
 
 export function sortWithOrder(
@@ -115,4 +115,45 @@ export async function deleteFile(app: App, file: TAbstractFile): Promise<void> {
   } else {
     await app.vault.trash(file, trashOption === "system");
   }
+}
+
+// Append a wiki link for each of `itemPaths` to the end of the note at
+// `targetPath`, one link per line, preserving the given order. If the note is
+// open in a markdown view, insert via its editor so unsaved changes survive.
+export async function appendWikiLinksToNote(
+  app: App,
+  targetPath: string,
+  itemPaths: string[]
+): Promise<void> {
+  const target = app.vault.getAbstractFileByPath(targetPath);
+  if (!(target instanceof TFile)) return;
+
+  const dragged = new Set(itemPaths);
+  if (dragged.has(targetPath)) return;
+
+  const links = itemPaths
+    .map((p) => app.vault.getAbstractFileByPath(p))
+    .filter((f): f is TFile => f instanceof TFile && f.path !== targetPath)
+    .map((f) => `[[${f.basename}]]`);
+  if (links.length === 0) return;
+
+  const text = links.join("\n") + "\n";
+
+  const openView = app.workspace.getLeavesOfType("markdown")
+    .map((leaf) => leaf.view)
+    .find((v): v is MarkdownView => v instanceof MarkdownView && v.file?.path === targetPath);
+
+  if (openView && openView.editor) {
+    const editor = openView.editor;
+    const lastLine = editor.lastLine();
+    const ch = editor.getLine(lastLine).length;
+    const prefix = ch > 0 ? "\n" : "";
+    editor.replaceRange(prefix + text, { line: lastLine, ch });
+    return;
+  }
+
+  let content = await app.vault.read(target);
+  if (content.length > 0 && !content.endsWith("\n")) content += "\n";
+  content += text;
+  await app.vault.modify(target, content);
 }

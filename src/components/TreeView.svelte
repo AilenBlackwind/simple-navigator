@@ -4,7 +4,7 @@
   import { onMount, onDestroy } from "svelte";
   import TreeNode from "./TreeNode.svelte";
   import { sortWithOrder, deleteFile } from "../utils";
-  import { dragState, createDropIndicator, updateDropIndicator, removeDropIndicator, destroyDropIndicator, clearFolderHighlight, highlightFolder, resolveDropTarget, updatePathsOnMove, updateAutoScroll, DROP_ZONE_BUFFER } from "../drag-state";
+  import { dragState, createDropIndicator, updateDropIndicator, removeDropIndicator, destroyDropIndicator, clearFolderHighlight, highlightFolder, resolveDropTarget, updatePathsOnMove, updateAutoScroll, DROP_ZONE_BUFFER, clearLinkTargetHighlight } from "../drag-state";
   import type { PluginSettings } from "../settings";
   import { showConfirmModal } from "../confirm-modal";
 
@@ -278,11 +278,13 @@
     document.body.classList.remove("sn-is-dragging");
     destroyDropIndicator();
     clearFolderHighlight(true);
+    clearLinkTargetHighlight();
     dragState.itemPath = "";
     dragState.fromPath = "";
     dragState.batchPaths = [];
     dragState.targetFolder = null;
     dragState.toPath = "";
+    dragState.linkTarget = null;
   }
 
   function handleWindowDrop(e: DragEvent) {
