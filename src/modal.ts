@@ -1,4 +1,4 @@
-import { App, FuzzySuggestModal, FuzzyMatch, Command, TFolder, TFile } from "obsidian";
+import { App, FuzzySuggestModal, FuzzyMatch, Command, TFolder, TAbstractFile, renderMatches } from "obsidian";
 import { ICON_LIST } from "./generated/icon-list";
 import { CUSTOM_ICON_PREFIX, setCustomIcon, cachedCustomItems } from "./icon-utils";
 
@@ -74,6 +74,63 @@ export class IconSuggestModal extends FuzzySuggestModal<string> {
 
   onChooseItem(icon: string): void {
     this.onSelect(icon);
+  }
+}
+
+export class MoveToModal extends FuzzySuggestModal<TFolder> {
+  private onSelect: (folder: TFolder) => void;
+  private excludes: Set<string>;
+  private targetPath: string;
+
+  constructor(app: App, target: TAbstractFile, onSelect: (folder: TFolder) => void) {
+    super(app);
+    this.onSelect = onSelect;
+    this.targetPath = target.path;
+    this.excludes = new Set<string>();
+    if (target.parent) this.excludes.add(target.parent.path);
+    if (target instanceof TFolder) {
+      this.excludes.add(target.path);
+    }
+    this.setPlaceholder("Type a folder name to move to...");
+    this.setInstructions([
+      { command: "\u2191\u2193", purpose: "Navigate" },
+      { command: "\u21B5", purpose: "Move here" },
+      { command: "esc", purpose: "Cancel" },
+    ]);
+  }
+
+  getItems(): TFolder[] {
+    return this.app.vault.getAllLoadedFiles().filter((f): f is TFolder => {
+      if (!(f instanceof TFolder)) return false;
+      if (this.excludes.has(f.path)) return false;
+      if (f.path === this.targetPath) return false;
+      if (f.path.startsWith(this.targetPath + "/")) return false;
+      return true;
+    });
+  }
+
+  getItemText(folder: TFolder): string {
+    return folder.name || "(root)";
+  }
+
+  renderSuggestion(item: FuzzyMatch<TFolder>, el: HTMLElement): void {
+    const folder = item.item;
+    const name = folder.name || "(root)";
+    const nameEl = el.createDiv({ cls: "suggestion-title" });
+    renderMatches(nameEl, name, item.match.matches);
+    const parentPath = folder.parent ? folder.parent.path : "";
+    if (parentPath) {
+      const pathEl = el.createDiv({ cls: "suggestion-note" });
+      pathEl.setText(parentPath);
+      pathEl.style.opacity = "0.55";
+      pathEl.style.fontSize = "var(--font-ui-small)";
+      pathEl.style.color = "var(--text-muted)";
+      pathEl.style.marginTop = "1px";
+    }
+  }
+
+  onChooseItem(folder: TFolder): void {
+    this.onSelect(folder);
   }
 }
 

@@ -2885,6 +2885,59 @@ var IconSuggestModal = class extends import_obsidian4.FuzzySuggestModal {
     this.onSelect(icon);
   }
 };
+var MoveToModal = class extends import_obsidian4.FuzzySuggestModal {
+  constructor(app, target, onSelect) {
+    super(app);
+    this.onSelect = onSelect;
+    this.targetPath = target.path;
+    this.excludes = /* @__PURE__ */ new Set();
+    if (target.parent)
+      this.excludes.add(target.parent.path);
+    if (target instanceof import_obsidian4.TFolder) {
+      this.excludes.add(target.path);
+    }
+    this.setPlaceholder("Type a folder name to move to...");
+    this.setInstructions([
+      { command: "\u2191\u2193", purpose: "Navigate" },
+      { command: "\u21B5", purpose: "Move here" },
+      { command: "esc", purpose: "Cancel" }
+    ]);
+  }
+  getItems() {
+    return this.app.vault.getAllLoadedFiles().filter((f) => {
+      if (!(f instanceof import_obsidian4.TFolder))
+        return false;
+      if (this.excludes.has(f.path))
+        return false;
+      if (f.path === this.targetPath)
+        return false;
+      if (f.path.startsWith(this.targetPath + "/"))
+        return false;
+      return true;
+    });
+  }
+  getItemText(folder) {
+    return folder.name || "(root)";
+  }
+  renderSuggestion(item, el) {
+    const folder = item.item;
+    const name = folder.name || "(root)";
+    const nameEl = el.createDiv({ cls: "suggestion-title" });
+    (0, import_obsidian4.renderMatches)(nameEl, name, item.match.matches);
+    const parentPath = folder.parent ? folder.parent.path : "";
+    if (parentPath) {
+      const pathEl = el.createDiv({ cls: "suggestion-note" });
+      pathEl.setText(parentPath);
+      pathEl.style.opacity = "0.55";
+      pathEl.style.fontSize = "var(--font-ui-small)";
+      pathEl.style.color = "var(--text-muted)";
+      pathEl.style.marginTop = "1px";
+    }
+  }
+  onChooseItem(folder) {
+    this.onSelect(folder);
+  }
+};
 var FolderSuggestModal = class extends import_obsidian4.FuzzySuggestModal {
   constructor(app, onSelect) {
     super(app);
@@ -4422,6 +4475,20 @@ function instance($$self, $$props, $$invalidate) {
     event.stopPropagation();
     const menu = new import_obsidian6.Menu();
     const pluginInstance = () => app.plugins.plugins["simple-navigator"];
+    function handleMoveTo() {
+      const p = pluginInstance();
+      if (p)
+        p.setLastClicked(file);
+      new MoveToModal(
+        app,
+        file,
+        (folder) => __awaiter(this, void 0, void 0, function* () {
+          const p2 = pluginInstance();
+          if (p2)
+            yield p2.moveItemTo(file, folder);
+        })
+      ).open();
+    }
     if (isFolder) {
       menu.addItem((item) => item.setTitle("New note").setIcon("file-plus").onClick(() => __awaiter(this, void 0, void 0, function* () {
         const folder = file;
@@ -4451,7 +4518,7 @@ function instance($$self, $$props, $$invalidate) {
               s.onClick(() => {
                 const p = pluginInstance();
                 if (p)
-                  p.lastClicked = file;
+                  p.setLastClicked(file);
                 app.commands.executeCommandById(cmd.commandId);
               });
             });
@@ -4535,6 +4602,8 @@ function instance($$self, $$props, $$invalidate) {
       menu.addSeparator();
     }
     const singleHidden = !isMultiSelected && settings.hiddenPaths.includes(file.path);
+    menu.addItem((item) => item.setTitle("Move to...").setIcon("corner-up-right").onClick(handleMoveTo));
+    menu.addSeparator();
     menu.addItem((item) => item.setTitle(isMultiSelected ? "Toggle hide" : singleHidden ? "Unhide" : "Hide").setIcon(isMultiSelected ? "eye" : singleHidden ? "eye" : "eye-off").onClick(() => __awaiter(this, void 0, void 0, function* () {
       const next = Object.assign({}, settings);
       for (const p of targetPaths) {
@@ -4724,7 +4793,7 @@ function instance($$self, $$props, $$invalidate) {
               s.onClick(() => {
                 const p = pluginInstance();
                 if (p)
-                  p.lastClicked = file;
+                  p.setLastClicked(file);
                 app.commands.executeCommandById(cmd.commandId);
               });
             });
@@ -4748,7 +4817,7 @@ function instance($$self, $$props, $$invalidate) {
           s.onClick(() => {
             const p = pluginInstance();
             if (p)
-              p.lastClicked = file;
+              p.setLastClicked(file);
             app.commands.executeCommandById(cmd.commandId);
           });
         });
@@ -5749,7 +5818,7 @@ function instance2($$self, $$props, $$invalidate) {
             s.onClick(() => {
               const p = app.plugins.plugins["simple-navigator"];
               if (p)
-                p.lastClicked = null;
+                p.setLastClicked(null);
               app.commands.executeCommandById(cmd.commandId);
             });
           });
@@ -5781,7 +5850,7 @@ function instance2($$self, $$props, $$invalidate) {
               s.onClick(() => {
                 const p = app.plugins.plugins["simple-navigator"];
                 if (p)
-                  p.lastClicked = null;
+                  p.setLastClicked(null);
                 app.commands.executeCommandById(cmd.commandId);
               });
             });
@@ -5801,7 +5870,7 @@ function instance2($$self, $$props, $$invalidate) {
           s.onClick(() => {
             const p = app.plugins.plugins["simple-navigator"];
             if (p)
-              p.lastClicked = null;
+              p.setLastClicked(null);
             app.commands.executeCommandById(cmd.commandId);
           });
         });
@@ -6657,6 +6726,7 @@ var SimpleNavigatorPlugin = class extends import_obsidian10.Plugin {
   constructor() {
     super(...arguments);
     this.lastClicked = null;
+    this.lastClickedAt = 0;
   }
   async onload() {
     const rawData = await this.loadData();
@@ -6704,6 +6774,11 @@ var SimpleNavigatorPlugin = class extends import_obsidian10.Plugin {
         await this.saveSettings();
       }
     });
+    this.addCommand({
+      id: "move-to",
+      name: "Move to...",
+      callback: () => this.showMoveToDialog()
+    });
     this.addRibbonIcon("folder-tree", "Simple Navigator", () => {
       this.activateView();
     });
@@ -6712,6 +6787,50 @@ var SimpleNavigatorPlugin = class extends import_obsidian10.Plugin {
   async onunload() {
     const { clearIconCache: clearIconCache2 } = await Promise.resolve().then(() => (init_icon_utils(), icon_utils_exports));
     clearIconCache2();
+  }
+  setLastClicked(file) {
+    this.lastClicked = file;
+    this.lastClickedAt = file ? Date.now() : 0;
+  }
+  showMoveToDialog() {
+    let target = null;
+    if (this.lastClicked && Date.now() - this.lastClickedAt < 5e3) {
+      target = this.lastClicked;
+    } else {
+      target = this.app.workspace.getActiveFile();
+    }
+    this.lastClicked = null;
+    this.lastClickedAt = 0;
+    if (!target) {
+      new import_obsidian10.Notice("No file or folder selected");
+      return;
+    }
+    const item = target;
+    new MoveToModal(this.app, item, (folder) => {
+      this.moveItemTo(item, folder);
+    }).open();
+  }
+  async moveItemTo(item, targetFolder) {
+    if (item instanceof import_obsidian10.TFolder) {
+      if (targetFolder.path === item.path || targetFolder.path.startsWith(item.path + "/")) {
+        new import_obsidian10.Notice("Cannot move a folder into itself");
+        return;
+      }
+    }
+    const targetPath = targetFolder.path ? (0, import_obsidian10.normalizePath)(`${targetFolder.path}/${item.name}`) : item.name;
+    if (targetPath === item.path)
+      return;
+    const savedSettings = this.settings;
+    try {
+      this.settings = updatePathsOnMove(this.settings, item.path, targetPath);
+      await this.app.fileManager.renameFile(item, targetPath);
+    } catch (e) {
+      console.error("Move failed:", e);
+      this.settings = savedSettings;
+      new import_obsidian10.Notice(`Cannot move "${item.name}": file is locked`);
+      return;
+    }
+    await this.saveSettings();
   }
   async moveOrderKey(oldPath, newPath) {
     const orderMap = { ...this.settings.orderMap };

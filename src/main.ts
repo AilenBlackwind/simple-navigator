@@ -1,12 +1,15 @@
-import { Plugin, WorkspaceLeaf, TFolder, TAbstractFile } from "obsidian";
+import { Plugin, WorkspaceLeaf, TFolder, TAbstractFile, Notice, normalizePath } from "obsidian";
 import { SIMPLE_NAVIGATOR_VIEW, SimpleNavigatorView } from "./SimpleNavigatorView";
 import { PluginSettings, DEFAULT_SETTINGS, SimpleNavigatorSettingTab } from "./settings";
 import { refreshCustomIcons } from "./icon-utils";
 import { cleanUpSettings } from "./utils";
+import { MoveToModal } from "./modal";
+import { updatePathsOnMove } from "./drag-state";
 
 export default class SimpleNavigatorPlugin extends Plugin {
   settings!: PluginSettings;
   lastClicked: TAbstractFile | null = null;
+  lastClickedAt = 0;
 
   async onload() {
     const rawData = await this.loadData() as Record<string, unknown> | null;
@@ -69,6 +72,12 @@ export default class SimpleNavigatorPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "move-to",
+      name: "Move to...",
+      callback: () => this.showMoveToDialog(),
+    });
+
     this.addRibbonIcon("folder-tree", "Simple Navigator", () => {
       this.activateView();
     });
@@ -79,6 +88,57 @@ export default class SimpleNavigatorPlugin extends Plugin {
   async onunload() {
     const { clearIconCache } = await import("./icon-utils");
     clearIconCache();
+  }
+
+  setLastClicked(file: TAbstractFile | null) {
+    this.lastClicked = file;
+    this.lastClickedAt = file ? Date.now() : 0;
+  }
+
+  showMoveToDialog() {
+    let target: TAbstractFile | null = null;
+    if (this.lastClicked && Date.now() - this.lastClickedAt < 5000) {
+      target = this.lastClicked;
+    } else {
+      target = this.app.workspace.getActiveFile();
+    }
+    this.lastClicked = null;
+    this.lastClickedAt = 0;
+
+    if (!target) {
+      new Notice("No file or folder selected");
+      return;
+    }
+    const item = target;
+
+    new MoveToModal(this.app, item, (folder) => {
+      this.moveItemTo(item, folder);
+    }).open();
+  }
+
+  async moveItemTo(item: TAbstractFile, targetFolder: TFolder): Promise<void> {
+    if (item instanceof TFolder) {
+      if (targetFolder.path === item.path || targetFolder.path.startsWith(item.path + "/")) {
+        new Notice("Cannot move a folder into itself");
+        return;
+      }
+    }
+    const targetPath = targetFolder.path
+      ? normalizePath(`${targetFolder.path}/${item.name}`)
+      : item.name;
+    if (targetPath === item.path) return;
+
+    const savedSettings = this.settings;
+    try {
+      this.settings = updatePathsOnMove(this.settings, item.path, targetPath);
+      await this.app.fileManager.renameFile(item, targetPath);
+    } catch (e) {
+      console.error("Move failed:", e);
+      this.settings = savedSettings;
+      new Notice(`Cannot move "${item.name}": file is locked`);
+      return;
+    }
+    await this.saveSettings();
   }
 
   async moveOrderKey(oldPath: string, newPath: string): Promise<void> {

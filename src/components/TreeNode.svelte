@@ -5,7 +5,7 @@
   import { setCustomIcon } from "../icon-utils";
   import { dragState, createDropIndicator, updateDropIndicator, removeDropIndicator, destroyDropIndicator, clearFolderHighlight, highlightFolder, resolveDropTarget, updatePathsOnMove, updateAutoScroll } from "../drag-state";
   import type { PluginSettings } from "../settings";
-  import { IconSuggestModal } from "../modal";
+  import { IconSuggestModal, MoveToModal } from "../modal";
 import { showConfirmModal } from "../confirm-modal";
 
   export let app: App;
@@ -292,6 +292,15 @@ import { showConfirmModal } from "../confirm-modal";
     const menu = new Menu();
     const pluginInstance = () => (app as any).plugins.plugins['simple-navigator'];
 
+    function handleMoveTo() {
+      const p = pluginInstance();
+      if (p) p.setLastClicked(file);
+      new MoveToModal(app, file, async (folder) => {
+        const p2 = pluginInstance();
+        if (p2) await p2.moveItemTo(file, folder);
+      }).open();
+    }
+
     if (isFolder) {
       menu.addItem((item) =>
         item
@@ -328,7 +337,7 @@ import { showConfirmModal } from "../confirm-modal";
               if (cmd.icon) s.setIcon(cmd.icon);
               s.onClick(() => {
                 const p = pluginInstance();
-                if (p) p.lastClicked = file;
+                if (p) p.setLastClicked(file);
                 app.commands.executeCommandById(cmd.commandId);
               });
             });
@@ -444,6 +453,13 @@ import { showConfirmModal } from "../confirm-modal";
     }
 
     const singleHidden = !isMultiSelected && settings.hiddenPaths.includes(file.path);
+    menu.addItem((item) =>
+      item
+        .setTitle("Move to...")
+        .setIcon("corner-up-right")
+        .onClick(handleMoveTo)
+    );
+    menu.addSeparator();
     menu.addItem((item) =>
       item
         .setTitle(isMultiSelected ? "Toggle hide" : singleHidden ? "Unhide" : "Hide")
@@ -665,7 +681,7 @@ import { showConfirmModal } from "../confirm-modal";
               if (cmd.icon) s.setIcon(cmd.icon);
               s.onClick(() => {
                 const p = pluginInstance();
-                if (p) p.lastClicked = file;
+                if (p) p.setLastClicked(file);
                 app.commands.executeCommandById(cmd.commandId);
               });
             });
@@ -684,7 +700,7 @@ import { showConfirmModal } from "../confirm-modal";
           if (cmd.icon) s.setIcon(cmd.icon);
           s.onClick(() => {
             const p = pluginInstance();
-            if (p) p.lastClicked = file;
+            if (p) p.setLastClicked(file);
             app.commands.executeCommandById(cmd.commandId);
           });
         });

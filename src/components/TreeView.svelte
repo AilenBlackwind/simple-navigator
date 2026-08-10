@@ -377,7 +377,7 @@
             if (cmd.icon) s.setIcon(cmd.icon);
             s.onClick(() => {
               const p = (app as any).plugins.plugins['simple-navigator'];
-              if (p) p.lastClicked = null;
+              if (p) p.setLastClicked(null);
               app.commands.executeCommandById(cmd.commandId);
             });
           });
@@ -399,11 +399,11 @@
             sub.addItem((s) => {
               s.setTitle(cmd.label);
               if (cmd.icon) s.setIcon(cmd.icon);
-              s.onClick(() => {
-                const p = (app as any).plugins.plugins['simple-navigator'];
-                if (p) p.lastClicked = null;
-                app.commands.executeCommandById(cmd.commandId);
-              });
+            s.onClick(() => {
+              const p = (app as any).plugins.plugins['simple-navigator'];
+              if (p) p.setLastClicked(null);
+              app.commands.executeCommandById(cmd.commandId);
+            });
             });
           }
         });
@@ -419,7 +419,7 @@
           if (cmd.icon) s.setIcon(cmd.icon);
           s.onClick(() => {
             const p = (app as any).plugins.plugins['simple-navigator'];
-            if (p) p.lastClicked = null;
+            if (p) p.setLastClicked(null);
             app.commands.executeCommandById(cmd.commandId);
           });
         });
