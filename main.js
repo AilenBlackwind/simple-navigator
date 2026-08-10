@@ -4862,7 +4862,7 @@ function instance($$self, $$props, $$invalidate) {
     } else {
       dragState.batchPaths = [];
     }
-    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.effectAllowed = "copyMove";
     e.dataTransfer.setData("text/plain", itemPath);
     const color = settings.colorMap[itemPath] || "var(--text-faint)";
     createDropIndicator(color);
@@ -5258,7 +5258,7 @@ var TreeNode_default = TreeNode;
 // src/components/TreeView.svelte
 function get_each_context2(ctx, list, i) {
   const child_ctx = ctx.slice();
-  child_ctx[26] = list[i];
+  child_ctx[29] = list[i];
   return child_ctx;
 }
 function create_each_block2(key_1, ctx) {
@@ -5273,7 +5273,7 @@ function create_each_block2(key_1, ctx) {
       ),
       file: (
         /*child*/
-        ctx[26]
+        ctx[29]
       ),
       depth: 0,
       activeFilePath: (
@@ -5330,35 +5330,35 @@ function create_each_block2(key_1, ctx) {
     p(new_ctx, dirty) {
       ctx = new_ctx;
       const treenode_changes = {};
-      if (dirty & /*app*/
+      if (dirty[0] & /*app*/
       2)
         treenode_changes.app = /*app*/
         ctx[1];
-      if (dirty & /*children*/
+      if (dirty[0] & /*children*/
       128)
         treenode_changes.file = /*child*/
-        ctx[26];
-      if (dirty & /*activeFilePath*/
+        ctx[29];
+      if (dirty[0] & /*activeFilePath*/
       32)
         treenode_changes.activeFilePath = /*activeFilePath*/
         ctx[5];
-      if (dirty & /*settings*/
+      if (dirty[0] & /*settings*/
       1)
         treenode_changes.settings = /*settings*/
         ctx[0];
-      if (dirty & /*showHidden*/
+      if (dirty[0] & /*showHidden*/
       4)
         treenode_changes.showHidden = /*showHidden*/
         ctx[2];
-      if (dirty & /*refreshKey*/
+      if (dirty[0] & /*refreshKey*/
       8)
         treenode_changes.refreshKey = /*refreshKey*/
         ctx[3];
-      if (dirty & /*selectedPaths*/
+      if (dirty[0] & /*selectedPaths*/
       64)
         treenode_changes.selectedPaths = /*selectedPaths*/
         ctx[6];
-      if (dirty & /*onUpdateSettings*/
+      if (dirty[0] & /*onUpdateSettings*/
       16)
         treenode_changes.onUpdateSettings = /*onUpdateSettings*/
         ctx[4];
@@ -5396,7 +5396,7 @@ function create_fragment2(ctx) {
   );
   const get_key = (ctx2) => (
     /*child*/
-    ctx2[26].path
+    ctx2[29].path
   );
   for (let i = 0; i < each_value.length; i += 1) {
     let child_ctx = get_each_context2(ctx, each_value, i);
@@ -5449,8 +5449,8 @@ function create_fragment2(ctx) {
         mounted = true;
       }
     },
-    p(ctx2, [dirty]) {
-      if (dirty & /*app, children, activeFilePath, settings, showHidden, refreshKey, selectedPaths, handleSelect, clearSelection, handleSortEnd, onUpdateSettings*/
+    p(ctx2, dirty) {
+      if (dirty[0] & /*app, children, activeFilePath, settings, showHidden, refreshKey, selectedPaths, handleSelect, clearSelection, handleSortEnd, onUpdateSettings*/
       9215) {
         each_value = ensure_array_like(
           /*children*/
@@ -5486,6 +5486,89 @@ function create_fragment2(ctx) {
       run_all(dispose);
     }
   };
+}
+function lineCharOffset(lineEl, startContainer, startOffset) {
+  var _a, _b;
+  if (startContainer.nodeType === Node.TEXT_NODE) {
+    const walker = document.createTreeWalker(lineEl, NodeFilter.SHOW_TEXT);
+    let ch = 0;
+    let node = walker.nextNode();
+    while (node) {
+      if (node === startContainer)
+        return ch + startOffset;
+      ch += (_b = (_a = node.textContent) === null || _a === void 0 ? void 0 : _a.length) !== null && _b !== void 0 ? _b : 0;
+      node = walker.nextNode();
+    }
+  }
+  return 0;
+}
+function getDropPos(editor, x, y) {
+  const anyEditor = editor;
+  if (typeof anyEditor.posAtCoords === "function") {
+    const pos = anyEditor.posAtCoords({ left: x, top: y });
+    if (pos && typeof pos.line === "number")
+      return pos;
+  }
+  const el = document.elementFromPoint(x, y);
+  const content = el ? el.closest(".cm-content") : null;
+  if (content) {
+    let cmView = content.cmView;
+    if (cmView && typeof cmView.posAtCoords !== "function")
+      cmView = cmView.view;
+    if (cmView && typeof cmView.posAtCoords === "function") {
+      try {
+        const offset = cmView.posAtCoords({ left: x, top: y }, true);
+        if (typeof offset === "number") {
+          const pos = editor.offsetToPos(offset);
+          if (pos && typeof pos.line === "number")
+            return pos;
+        }
+      } catch (err) {
+        console.warn("SN posAtCoords failed:", err);
+      }
+    }
+  }
+  if (document.caretRangeFromPoint) {
+    const range = document.caretRangeFromPoint(x, y);
+    if (range) {
+      let node = range.startContainer;
+      while (node && !(node instanceof HTMLElement && node.classList.contains("cm-line"))) {
+        node = node.parentElement || null;
+      }
+      if (node instanceof HTMLElement) {
+        const content2 = node.closest(".cm-content");
+        if (content2) {
+          const lines = Array.from(content2.querySelectorAll(".cm-line"));
+          const lineIdx = lines.indexOf(node);
+          if (lineIdx >= 0) {
+            const ch = lineCharOffset(node, range.startContainer, range.startOffset);
+            return { line: lineIdx, ch };
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+function clampPosOutOfLinks(editor, pos) {
+  if (pos.line < 0)
+    return pos;
+  const text2 = editor.getLine(pos.line);
+  let ch = pos.ch;
+  let search = 0;
+  for (; ; ) {
+    const open = text2.indexOf("[[", search);
+    if (open === -1)
+      break;
+    const close = text2.indexOf("]]", open + 2);
+    if (close === -1)
+      break;
+    if (ch > open && ch < close + 2) {
+      ch = close + 2;
+    }
+    search = close + 2;
+  }
+  return { line: pos.line, ch };
 }
 function instance2($$self, $$props, $$invalidate) {
   let rawChildren;
@@ -5606,6 +5689,14 @@ function instance2($$self, $$props, $$invalidate) {
     const tree = document.querySelector(".simple-navigator-tree");
     if (!tree)
       return;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (el && el.closest(".markdown-source-view")) {
+      e.stopPropagation();
+      if (e.dataTransfer)
+        e.dataTransfer.dropEffect = "copy";
+      e.preventDefault();
+      return;
+    }
     const tr = tree.getBoundingClientRect();
     if (e.clientY < tr.top - DROP_ZONE_BUFFER || e.clientY > tr.bottom)
       return;
@@ -5615,6 +5706,49 @@ function instance2($$self, $$props, $$invalidate) {
     e.preventDefault();
     handleRootDragOver(e);
   }
+  function getEditorAt(x, y) {
+    const el = document.elementFromPoint(x, y);
+    if (!el || !el.closest(".markdown-source-view"))
+      return null;
+    for (const leaf of app.workspace.getLeavesOfType("markdown")) {
+      const view = leaf.view;
+      if (!(view instanceof import_obsidian7.MarkdownView))
+        continue;
+      try {
+        if (view.getMode() !== "source")
+          continue;
+      } catch (_a) {
+        continue;
+      }
+      if (!view.editor)
+        continue;
+      if (view.containerEl.contains(el))
+        return view.editor;
+    }
+    return null;
+  }
+  function insertLinksAt(editor, x, y) {
+    const pos = getDropPos(editor, x, y);
+    if (!pos)
+      return;
+    const safePos = clampPosOutOfLinks(editor, pos);
+    const items = dragState.batchPaths.length > 0 ? dragState.batchPaths : [dragState.itemPath];
+    const links = items.map((p) => app.vault.getAbstractFileByPath(p)).filter((f) => f instanceof import_obsidian7.TFile).map((f) => `[[${f.basename}]]`);
+    if (links.length === 0)
+      return;
+    editor.replaceRange(links.join(" "), safePos, safePos);
+    editor.focus();
+  }
+  function resetDragState() {
+    document.body.classList.remove("sn-is-dragging");
+    destroyDropIndicator();
+    clearFolderHighlight(true);
+    dragState.itemPath = "";
+    dragState.fromPath = "";
+    dragState.batchPaths = [];
+    dragState.targetFolder = null;
+    dragState.toPath = "";
+  }
   function handleWindowDrop(e) {
     if (!dragState.itemPath)
       return;
@@ -5623,6 +5757,14 @@ function instance2($$self, $$props, $$invalidate) {
       return;
     if (tree.contains(e.target))
       return;
+    const editor = getEditorAt(e.clientX, e.clientY);
+    if (editor) {
+      e.stopPropagation();
+      e.preventDefault();
+      insertLinksAt(editor, e.clientX, e.clientY);
+      resetDragState();
+      return;
+    }
     const tr = tree.getBoundingClientRect();
     if (e.clientY < tr.top - DROP_ZONE_BUFFER || e.clientY > tr.bottom)
       return;
@@ -5974,17 +6116,17 @@ function instance2($$self, $$props, $$invalidate) {
       $$invalidate(15, registerDomEvent = $$props2.registerDomEvent);
   };
   $$self.$$.update = () => {
-    if ($$self.$$.dirty & /*rootFolder, settings, refreshKey*/
+    if ($$self.$$.dirty[0] & /*rootFolder, settings, refreshKey*/
     16393) {
       $:
         $$invalidate(17, rawChildren = sortWithOrder([...rootFolder.children], settings.orderMap, "", refreshKey));
     }
-    if ($$self.$$.dirty & /*settings*/
+    if ($$self.$$.dirty[0] & /*settings*/
     1) {
       $:
         $$invalidate(16, hiddenSet = new Set(settings.hiddenPaths));
     }
-    if ($$self.$$.dirty & /*showHidden, rawChildren, hiddenSet*/
+    if ($$self.$$.dirty[0] & /*showHidden, rawChildren, hiddenSet*/
     196612) {
       $:
         $$invalidate(7, children2 = showHidden ? rawChildren : rawChildren.filter((c) => !hiddenSet.has(c.path)));
@@ -6014,15 +6156,24 @@ function instance2($$self, $$props, $$invalidate) {
 var TreeView = class extends SvelteComponent {
   constructor(options) {
     super();
-    init(this, options, instance2, create_fragment2, safe_not_equal, {
-      app: 1,
-      rootFolder: 14,
-      settings: 0,
-      showHidden: 2,
-      refreshKey: 3,
-      onUpdateSettings: 4,
-      registerDomEvent: 15
-    });
+    init(
+      this,
+      options,
+      instance2,
+      create_fragment2,
+      safe_not_equal,
+      {
+        app: 1,
+        rootFolder: 14,
+        settings: 0,
+        showHidden: 2,
+        refreshKey: 3,
+        onUpdateSettings: 4,
+        registerDomEvent: 15
+      },
+      null,
+      [-1, -1]
+    );
   }
 };
 var TreeView_default = TreeView;

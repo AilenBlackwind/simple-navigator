@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { App, TFolder, EventRef, TFile, Menu, Notice, normalizePath } from "obsidian";
+  import { App, TFolder, EventRef, TFile, Menu, Notice, normalizePath, MarkdownView } from "obsidian";
+  import type { Editor } from "obsidian";
   import { onMount, onDestroy } from "svelte";
   import TreeNode from "./TreeNode.svelte";
   import { sortWithOrder, deleteFile } from "../utils";
@@ -136,6 +137,16 @@
     if (!dragState.itemPath) return;
     const tree = document.querySelector(".simple-navigator-tree");
     if (!tree) return;
+
+    // Over a markdown editor — allow the drop so we can insert a link
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (el && el.closest(".markdown-source-view")) {
+      e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      e.preventDefault();
+      return;
+    }
+
     const tr = tree.getBoundingClientRect();
     if (e.clientY < tr.top - DROP_ZONE_BUFFER || e.clientY > tr.bottom) return;
     // Within tree — let TreeNode and the tree's own handlers deal with it
@@ -147,11 +158,148 @@
     handleRootDragOver(e);
   }
 
+  function getEditorAt(x: number, y: number): Editor | null {
+    const el = document.elementFromPoint(x, y);
+    if (!el || !el.closest(".markdown-source-view")) return null;
+    for (const leaf of app.workspace.getLeavesOfType("markdown")) {
+      const view = leaf.view;
+      if (!(view instanceof MarkdownView)) continue;
+      try {
+        if (view.getMode() !== "source") continue;
+      } catch {
+        continue;
+      }
+      if (!view.editor) continue;
+      if (view.containerEl.contains(el)) return view.editor;
+    }
+    return null;
+  }
+
+  function lineCharOffset(lineEl: HTMLElement, startContainer: Node, startOffset: number): number {
+    if (startContainer.nodeType === Node.TEXT_NODE) {
+      const walker = document.createTreeWalker(lineEl, NodeFilter.SHOW_TEXT);
+      let ch = 0;
+      let node: Node | null = walker.nextNode();
+      while (node) {
+        if (node === startContainer) return ch + startOffset;
+        ch += node.textContent?.length ?? 0;
+        node = walker.nextNode();
+      }
+    }
+    return 0;
+  }
+
+  function getDropPos(editor: Editor, x: number, y: number): { line: number; ch: number } | null {
+    const anyEditor = editor as any;
+    if (typeof anyEditor.posAtCoords === "function") {
+      const pos = anyEditor.posAtCoords({ left: x, top: y });
+      if (pos && typeof pos.line === "number") return pos;
+    }
+    // Use the CM6 EditorView directly (stored on the .cm-content element as
+    // "cmView") to map viewport coords to an exact doc offset, then convert
+    // to a line/ch position. This avoids the rendered-vs-source mismatch that
+    // the caretRangeFromPoint fallback suffers from in Live Preview.
+    const el = document.elementFromPoint(x, y);
+    const content = el ? el.closest(".cm-content") as any : null;
+    if (content) {
+      let cmView = content.cmView;
+      if (cmView && typeof cmView.posAtCoords !== "function") cmView = cmView.view;
+      if (cmView && typeof cmView.posAtCoords === "function") {
+        try {
+          const offset = cmView.posAtCoords({ left: x, top: y }, true);
+          if (typeof offset === "number") {
+            const pos = editor.offsetToPos(offset);
+            if (pos && typeof pos.line === "number") return pos;
+          }
+        } catch (err) {
+          console.warn("SN posAtCoords failed:", err);
+        }
+      }
+    }
+    if (document.caretRangeFromPoint) {
+      const range = document.caretRangeFromPoint(x, y);
+      if (range) {
+        let node: Node | null = range.startContainer;
+        while (node && !(node instanceof HTMLElement && node.classList.contains("cm-line"))) {
+          node = node.parentElement || null;
+        }
+        if (node instanceof HTMLElement) {
+          const content = node.closest(".cm-content");
+          if (content) {
+            const lines = Array.from(content.querySelectorAll(".cm-line"));
+            const lineIdx = lines.indexOf(node);
+            if (lineIdx >= 0) {
+              const ch = lineCharOffset(node, range.startContainer, range.startOffset);
+              return { line: lineIdx, ch };
+            }
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  // In Live Preview a wikilink renders without its [[ ]] brackets, so the
+  // coordinate-to-position mapping can land inside an existing link. Shift
+  // the insertion point to just after the closing ]] of any link it is inside.
+  function clampPosOutOfLinks(editor: Editor, pos: { line: number; ch: number }): { line: number; ch: number } {
+    if (pos.line < 0) return pos;
+    const text = editor.getLine(pos.line);
+    let ch = pos.ch;
+    let search = 0;
+    for (;;) {
+      const open = text.indexOf("[[", search);
+      if (open === -1) break;
+      const close = text.indexOf("]]", open + 2);
+      if (close === -1) break;
+      if (ch > open && ch < close + 2) {
+        ch = close + 2;
+      }
+      search = close + 2;
+    }
+    return { line: pos.line, ch };
+  }
+
+  function insertLinksAt(editor: Editor, x: number, y: number) {
+    const pos = getDropPos(editor, x, y);
+    if (!pos) return;
+    const safePos = clampPosOutOfLinks(editor, pos);
+    const items = dragState.batchPaths.length > 0 ? dragState.batchPaths : [dragState.itemPath];
+    const links = items
+      .map((p) => app.vault.getAbstractFileByPath(p))
+      .filter((f): f is TFile => f instanceof TFile)
+      .map((f) => `[[${f.basename}]]`);
+    if (links.length === 0) return;
+    editor.replaceRange(links.join(" "), safePos, safePos);
+    editor.focus();
+  }
+
+  function resetDragState() {
+    document.body.classList.remove("sn-is-dragging");
+    destroyDropIndicator();
+    clearFolderHighlight(true);
+    dragState.itemPath = "";
+    dragState.fromPath = "";
+    dragState.batchPaths = [];
+    dragState.targetFolder = null;
+    dragState.toPath = "";
+  }
+
   function handleWindowDrop(e: DragEvent) {
     if (!dragState.itemPath) return;
     const tree = document.querySelector(".simple-navigator-tree");
     if (!tree) return;
     if (tree.contains(e.target as Node)) return;
+
+    const editor = getEditorAt(e.clientX, e.clientY);
+    if (editor) {
+      e.stopPropagation();
+      e.preventDefault();
+      insertLinksAt(editor, e.clientX, e.clientY);
+      resetDragState();
+      return;
+    }
+
     const tr = tree.getBoundingClientRect();
     if (e.clientY < tr.top - DROP_ZONE_BUFFER || e.clientY > tr.bottom) return;
     e.stopPropagation();

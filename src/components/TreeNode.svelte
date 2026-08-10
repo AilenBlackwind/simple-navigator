@@ -750,7 +750,7 @@ import { showConfirmModal } from "../confirm-modal";
       dragState.batchPaths = [];
     }
 
-    e.dataTransfer!.effectAllowed = "move";
+    e.dataTransfer!.effectAllowed = "copyMove";
     e.dataTransfer!.setData("text/plain", itemPath);
 
     const color = settings.colorMap[itemPath] || "var(--text-faint)";
