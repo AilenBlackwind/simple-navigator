@@ -188,3 +188,127 @@ body.sn-is-dragging .workspace-header {
   color: var(--text-on-accent);
   border-radius: var(--radius-s);
 }
+
+.sn-command-settings button:not(.mod-cta) {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.sn-command-settings button:not(:disabled):hover {
+  background: var(--background-modifier-hover);
+}
+
+.sn-command-settings button:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+.sn-command-settings button.sn-cmd-entry-action {
+  --icon-size: 16px;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.sn-command-settings .sn-cmd-entry-action svg {
+  display: block;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  max-width: none;
+  max-height: none;
+}
+
+.sn-command-settings {
+  --sn-cmd-control-size: 28px;
+}
+
+.sn-command-settings button {
+  min-height: var(--sn-cmd-control-size);
+}
+
+.sn-command-settings .sn-cmd-entry-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.sn-command-settings .sn-cmd-entry-controls {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  align-items: center;
+}
+
+.sn-command-settings .sn-cmd-entry-details {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.sn-command-settings .sn-cmd-entry-details input {
+  width: 100%;
+  min-width: 0;
+}
+
+.sn-command-settings .sn-cmd-entry-description {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  overflow-wrap: anywhere;
+}
+
+.sn-command-settings button.sn-cmd-entry-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 16px;
+}
+
+.sn-command-settings button.sn-cmd-entry-action:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.sn-command-settings button.sn-cmd-entry-label:not([hidden]) {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: var(--sn-cmd-control-size);
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+}
+
+.sn-command-settings .sn-cmd-entry-label-input {
+  box-sizing: border-box;
+  height: var(--sn-cmd-control-size);
+}
+
+.sn-command-settings .sn-cmd-entry-command-name {
+  margin-top: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sn-command-settings .sn-cmd-entry-label[hidden],
+.sn-command-settings .sn-cmd-entry-command-name[hidden] {
+  display: none;
+}
+
+.sn-command-settings .sn-cmd-entry-separator {
+  align-items: center;
+  flex-wrap: nowrap;
+  margin-bottom: 4px;
+}
+
+.sn-command-settings .sn-cmd-entry-separator-line {
+  border-top: 1px solid var(--background-modifier-border);
+}

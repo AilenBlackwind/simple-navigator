@@ -1,11 +1,12 @@
 import { PluginSettingTab, Setting, App, setIcon } from "obsidian";
-import { CommandSuggestModal, IconSuggestModal, FolderSuggestModal } from "./modal";
+import { listCommands, CommandSuggestModal, IconSuggestModal, FolderSuggestModal } from "./modal";
 import { setCustomIcon, refreshCustomIcons } from "./icon-utils";
 import type SimpleNavigatorPlugin from "./main";
 
 export interface SubmenuEntry {
   label: string;
   commandId: string;
+  commandName?: string;
   icon?: string;
   isSeparator?: boolean;
 }
@@ -382,7 +383,9 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       cls: "setting-item-description",
     });
 
-    const submenuSection = containerEl.createDiv();
+    const commandNames = new Map(listCommands(this.app)
+      .map(({ id, name }) => [id, name]));
+    const submenuSection = containerEl.createDiv({ cls: "sn-command-settings" });
     submenuSection.style.marginBottom = "8px";
 
     function renderSubmenus() {
@@ -417,12 +420,12 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       renderSubmenuSections.call(this);
     }
 
-    function renderSubmenuSections() {
+    function renderSubmenuSections(this: SimpleNavigatorSettingTab) {
       const existing = submenuSection.querySelectorAll(".sn-submenu-section");
       for (const el of existing) el.remove();
 
       for (const [sectionName, entries] of Object.entries(this.plugin.settings.submenus)) {
-        if (entries.length === 0 && sectionName === "New") continue;
+
 
         const sectionDiv = submenuSection.createDiv();
         sectionDiv.className = "sn-submenu-section";
@@ -437,19 +440,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
         headerRow.style.alignItems = "center";
         headerRow.style.marginBottom = "8px";
 
-        const sectionIconBtn = headerRow.createEl("button");
-        sectionIconBtn.style.width = "28px";
-        sectionIconBtn.style.height = "28px";
-        sectionIconBtn.style.display = "flex";
-        sectionIconBtn.style.alignItems = "center";
-        sectionIconBtn.style.justifyContent = "center";
-        sectionIconBtn.style.background = "transparent";
-        sectionIconBtn.style.border = "1px solid var(--background-modifier-border)";
-        sectionIconBtn.style.borderRadius = "4px";
-        sectionIconBtn.style.cursor = "pointer";
-        sectionIconBtn.style.color = "var(--text-muted)";
-        sectionIconBtn.style.flexShrink = "0";
-        sectionIconBtn.title = "Choose section icon";
+        const sectionIconBtn = action(headerRow, "", "Choose section icon");
         const renderSectionIcon = () => {
           sectionIconBtn.empty();
           const icon = this.plugin.settings.submenuIcons[sectionName];
@@ -476,13 +467,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
         headerTitle.style.fontWeight = "bold";
         headerTitle.style.flex = "1";
 
-        const removeSectionBtn = headerRow.createEl("button");
-        removeSectionBtn.textContent = "× Remove section";
-        removeSectionBtn.style.background = "transparent";
-        removeSectionBtn.style.border = "none";
-        removeSectionBtn.style.cursor = "pointer";
-        removeSectionBtn.style.color = "var(--text-muted)";
-        removeSectionBtn.style.fontSize = "12px";
+        const removeSectionBtn = action(headerRow, "trash-2", "Remove section");
         removeSectionBtn.onclick = async () => {
           const next = { ...this.plugin.settings.submenus };
           delete next[sectionName];
@@ -494,7 +479,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
         const entriesDiv = sectionDiv.createDiv();
 
         for (let i = 0; i < entries.length; i++) {
-          renderEntryRow.call(this, entriesDiv, entries, i, () => this.plugin.settings.submenus[sectionName], () => renderSubmenuSections.call(this));
+          renderEntryRow.call(this, entriesDiv, entries, i, () => renderSubmenuSections.call(this));
         }
 
         const addEntryRow = sectionDiv.createDiv();
@@ -502,14 +487,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
         addEntryRow.style.display = "flex";
         addEntryRow.style.gap = "8px";
 
-        const addEntryBtn = addEntryRow.createEl("button");
-        addEntryBtn.textContent = "+ Add command";
-        addEntryBtn.onclick = async () => {
-          entries.push({ label: "New command", commandId: "" });
-          this.plugin.settings.submenus = { ...this.plugin.settings.submenus };
-          await this.plugin.saveSettings();
-          renderSubmenuSections.call(this);
-        };
+        addCommand.call(this, addEntryRow, entries, () => renderSubmenuSections.call(this));
 
         const addSepBtn = addEntryRow.createEl("button");
         addSepBtn.textContent = "+ Separator";
@@ -523,13 +501,13 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
     }
 
     // --- Main menu commands ---
-    containerEl.createEl("h3", { text: "Main menu commands" });
+    containerEl.createEl("h3", { text: "Menu commands" });
     containerEl.createEl("p", {
-      text: "Commands shown at the bottom of the context menu, outside any submenu.",
+      text: "Commands shown in this profile, outside any submenu.",
       cls: "setting-item-description",
     });
 
-    const mainDesc = containerEl.createDiv();
+    const mainDesc = containerEl.createDiv({ cls: "sn-command-settings" });
     mainDesc.style.marginBottom = "8px";
 
     function renderMainCommands() {
@@ -537,7 +515,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       const list = this.plugin.settings.mainMenuCommands;
 
       for (let i = 0; i < list.length; i++) {
-        renderEntryRow.call(this, mainDesc, list, i, () => this.plugin.settings.mainMenuCommands, () => renderMainCommands.call(this));
+        renderEntryRow.call(this, mainDesc, list, i, () => renderMainCommands.call(this));
       }
 
       const addRow = mainDesc.createDiv();
@@ -545,16 +523,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       addRow.style.display = "flex";
       addRow.style.gap = "8px";
 
-      const addBtn = addRow.createEl("button");
-      addBtn.textContent = "+ Add command";
-      addBtn.onclick = async () => {
-        this.plugin.settings.mainMenuCommands = [
-          ...this.plugin.settings.mainMenuCommands,
-          { label: "New command", commandId: "" },
-        ];
-        await this.plugin.saveSettings();
-        renderMainCommands.call(this);
-      };
+      addCommand.call(this, addRow, list, () => renderMainCommands.call(this));
 
       const addSepBtn = addRow.createEl("button");
       addSepBtn.textContent = "+ Separator";
@@ -568,168 +537,141 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       };
     }
 
+    function action(parent: HTMLElement, icon: string, title: string): HTMLButtonElement {
+      const button = parent.createEl("button", {
+        cls: "sn-cmd-entry-action",
+        attr: { type: "button", title, "aria-label": title },
+      });
+      if (icon) setIcon(button, icon);
+      return button;
+    }
+
+    function addCommand(this: SimpleNavigatorSettingTab, parent: HTMLElement, list: SubmenuEntry[], render: () => void) {
+      const button = parent.createEl("button", { text: "+ Add command" });
+      button.onclick = () => new CommandSuggestModal(this.app, async ({ id, name }) => {
+        commandNames.set(id, name);
+        list.push({ label: name, commandId: id, commandName: name });
+        await this.plugin.saveSettings();
+        render();
+      }).open();
+    }
+
     function renderEntryRow(
+      this: SimpleNavigatorSettingTab,
       container: HTMLElement,
-      list: { label: string; commandId: string; icon?: string; isSeparator?: boolean }[],
+      list: SubmenuEntry[],
       index: number,
-      getList: () => { label: string; commandId: string; icon?: string; isSeparator?: boolean }[],
-      onRemove?: () => void
-    ) {
+      render: () => void
+    ): void {
       const entry = list[index];
+      const row = container.createDiv({ cls: entry.isSeparator ? "sn-cmd-entry-row sn-cmd-entry-separator" : "sn-cmd-entry-row" });
+      const order = row.createDiv({ cls: "sn-cmd-entry-controls" });
 
-      const swap = (i: number, j: number) => {
-        const tmp = list[i];
-        list[i] = list[j];
-        list[j] = tmp;
-      };
-
-      const createMoveButtons = (row: HTMLElement) => {
-        const moveUp = row.createEl("button");
-        moveUp.textContent = "▲";
-        moveUp.style.cssText = "width:22px;height:22px;padding:0;border:1px solid var(--background-modifier-border);border-radius:3px;background:transparent;cursor:pointer;color:var(--text-muted);font-size:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;";
-        moveUp.title = "Move up";
-        moveUp.disabled = index === 0;
-        moveUp.onclick = async () => {
-          swap(index, index - 1);
+      for (const [offset, title] of [[-1, "Move up"], [1, "Move down"]] as const) {
+        const button = action(order, offset < 0 ? "chevron-up" : "chevron-down", title);
+        const next = index + offset;
+        button.disabled = next < 0 || next >= list.length;
+        button.onclick = async () => {
+          [list[index], list[next]] = [list[next], list[index]];
           await this.plugin.saveSettings();
-          if (onRemove) onRemove();
+          render();
         };
-
-        const moveDown = row.createEl("button");
-        moveDown.textContent = "▼";
-        moveDown.style.cssText = moveUp.style.cssText;
-        moveDown.title = "Move down";
-        moveDown.disabled = index === list.length - 1;
-        moveDown.onclick = async () => {
-          swap(index, index + 1);
-          await this.plugin.saveSettings();
-          if (onRemove) onRemove();
-        };
-      };
-
-      if (entry.isSeparator) {
-        const row = container.createDiv();
-        row.style.display = "flex";
-        row.style.gap = "8px";
-        row.style.alignItems = "center";
-        row.style.marginBottom = "4px";
-        createMoveButtons(row);
-
-        const sepIcon = row.createSpan();
-        sepIcon.style.cssText = "width:28px;height:28px;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--text-muted);";
-        sepIcon.textContent = "—";
-
-        const sepLabel = row.createEl("span");
-        sepLabel.textContent = "Separator";
-        sepLabel.style.cssText = "flex:1;color:var(--text-muted);font-size:12px;font-style:italic;";
-
-        const removeBtn = row.createEl("button");
-        removeBtn.textContent = "×";
-        removeBtn.style.cssText = "background:transparent;border:none;cursor:pointer;color:var(--text-muted);";
-        removeBtn.onclick = async () => {
-          const updated = [...list.slice(0, index), ...list.slice(index + 1)];
-          for (let j = 0; j < updated.length; j++) list[j] = updated[j];
-          list.length = updated.length;
-          await this.plugin.saveSettings();
-          if (onRemove) onRemove();
-        };
-        return;
       }
 
-      const row = container.createDiv();
-      row.style.display = "flex";
-      row.style.gap = "8px";
-      row.style.alignItems = "center";
-      row.style.marginBottom = "4px";
-      createMoveButtons(row);
+      const details = row.createDiv({ cls: "sn-cmd-entry-details" });
+      const controls = row.createDiv({ cls: "sn-cmd-entry-controls" });
 
-      const labelInput = row.createEl("input", { type: "text" });
-      labelInput.value = list[index].label;
-      labelInput.style.flex = "1";
-      labelInput.style.background = "var(--background-primary)";
-      labelInput.placeholder = "Label (e.g. My script)";
+      if (entry.isSeparator) {
+        details.createDiv({ cls: "sn-cmd-entry-separator-line", attr: { role: "separator" } });
+      } else {
+        const labelButton = details.createEl("button", {
+          cls: "sn-cmd-entry-label",
+          attr: { type: "button" },
+        });
+        const description = details.createDiv({ cls: "sn-cmd-entry-description sn-cmd-entry-command-name" });
+        const renderLabel = () => {
+          const name = commandNames.get(entry.commandId);
+          const original = name ?? entry.commandName;
+          const label = entry.label || original || "Menu label";
+          const distinctName = original && original.trim() !== label.trim() ? original : "";
+          const status = name ? "" : entry.commandId ? "Command unavailable" : "No command selected";
+          const subtitle = [distinctName, status].filter(Boolean).join(" · ");
+          labelButton.setText(label);
+          labelButton.title = label + " — click to edit";
+          labelButton.setAttribute("aria-label", "Edit menu label: " + label);
+          description.setText(subtitle);
+          description.title = subtitle;
+          description.hidden = !subtitle;
+        };
+        renderLabel();
 
-      const iconBtn = row.createEl("button");
-      iconBtn.style.width = "28px";
-      iconBtn.style.height = "28px";
-      iconBtn.style.display = "flex";
-      iconBtn.style.alignItems = "center";
-      iconBtn.style.justifyContent = "center";
-      iconBtn.style.background = "transparent";
-      iconBtn.style.border = "1px solid var(--background-modifier-border)";
-      iconBtn.style.borderRadius = "4px";
-      iconBtn.style.cursor = "pointer";
-      iconBtn.style.color = "var(--text-muted)";
-      iconBtn.style.flexShrink = "0";
-      iconBtn.title = "Choose icon";
-      const renderIcon = () => {
-        iconBtn.empty();
-        if (list[index].icon) {
-          setCustomIcon(iconBtn, list[index].icon!, this.app);
-        } else {
-          iconBtn.setText("?");
-        }
-      };
-      renderIcon();
-      iconBtn.onclick = () => {
-        new IconSuggestModal(this.app, this.plugin.settings.customIconsFolder ?? "", (iconName) => {
-          list[index].icon = iconName;
-          getList();
-          renderIcon();
-          this.plugin.saveSettings();
-        }).open();
-      };
+        labelButton.onclick = () => {
+          labelButton.hidden = true;
+          const input = details.createEl("input", {
+            type: "text",
+            cls: "sn-cmd-entry-label-input",
+            attr: { "aria-label": "Menu label", placeholder: "Menu label" },
+          });
+          details.insertBefore(input, description);
+          input.value = entry.label;
 
-      const cmdInput = row.createEl("input", { type: "text" });
-      cmdInput.value = list[index].commandId;
-      cmdInput.style.flex = "1";
-      cmdInput.style.background = "var(--background-primary)";
-      cmdInput.placeholder = "Command ID (e.g. my-plugin:action)";
+          const finish = (save: boolean, restoreFocus: boolean) => {
+            if (!labelButton.hidden) return;
+            labelButton.hidden = false;
+            input.remove();
+            if (restoreFocus) labelButton.focus();
+            if (!save || input.value === entry.label) return;
+            entry.label = input.value;
+            renderLabel();
+            void this.plugin.saveSettings();
+          };
 
-      const searchBtn = row.createEl("button");
-      searchBtn.textContent = "Find...";
-      searchBtn.style.background = "transparent";
-      searchBtn.style.border = "none";
-      searchBtn.style.cursor = "pointer";
-      searchBtn.style.color = "var(--text-muted)";
-      searchBtn.style.fontSize = "12px";
-      searchBtn.title = "Search for a command";
-      searchBtn.onclick = () => {
-        new CommandSuggestModal(this.app, (command) => {
-          labelInput.value = command.name;
-          cmdInput.value = command.id;
-          list[index].label = command.name;
-          list[index].commandId = command.id;
-          this.plugin.saveSettings();
-        }).open();
-      };
+          input.onblur = () => finish(true, false);
+          input.onkeydown = (event) => {
+            if (event.isComposing || (event.key !== "Enter" && event.key !== "Escape")) return;
+            event.preventDefault();
+            event.stopPropagation();
+            finish(event.key === "Enter", true);
+          };
+          input.focus();
+          input.select();
+        };
 
-      const removeBtn = row.createEl("button");
-      removeBtn.textContent = "×";
-      removeBtn.style.background = "transparent";
-      removeBtn.style.border = "none";
-      removeBtn.style.cursor = "pointer";
-      removeBtn.style.color = "var(--text-muted)";
-      removeBtn.onclick = async () => {
-        const updated = [
-          ...list.slice(0, index),
-          ...list.slice(index + 1),
-        ];
-        for (let j = 0; j < updated.length; j++) {
-          list[j] = updated[j];
-        }
-        list.length = updated.length;
+        const iconBtn = action(controls, "", "Choose icon");
+        const renderIcon = () => {
+          if (entry.icon) setCustomIcon(iconBtn, entry.icon, this.app);
+          if (!iconBtn.querySelector("svg")) iconBtn.setText("?");
+        };
+        renderIcon();
+        iconBtn.onclick = () => {
+          new IconSuggestModal(this.app, this.plugin.settings.customIconsFolder ?? "", async (iconName) => {
+            entry.icon = iconName;
+            renderIcon();
+            await this.plugin.saveSettings();
+          }).open();
+        };
+
+        const replaceCommand = action(controls, "search", "Change command");
+        replaceCommand.onclick = () => {
+          new CommandSuggestModal(this.app, async ({ id, name }) => {
+            const previousName = commandNames.get(entry.commandId) ?? entry.commandName;
+            if (!entry.commandId || !entry.label || entry.label === previousName) {
+              entry.label = name;
+            }
+            entry.commandId = id;
+            entry.commandName = name;
+            commandNames.set(id, name);
+            renderLabel();
+            await this.plugin.saveSettings();
+          }).open();
+        };
+      }
+
+      const remove = action(controls, "trash-2", entry.isSeparator ? "Remove separator" : "Remove command");
+      remove.onclick = async () => {
+        list.splice(index, 1);
         await this.plugin.saveSettings();
-        if (onRemove) onRemove();
-      };
-
-      labelInput.onchange = async () => {
-        list[index].label = labelInput.value;
-        await this.plugin.saveSettings();
-      };
-      cmdInput.onchange = async () => {
-        list[index].commandId = cmdInput.value;
-        await this.plugin.saveSettings();
+        render();
       };
     }
 
@@ -740,7 +682,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       cls: "setting-item-description",
     });
 
-    const newDesc = containerEl.createDiv();
+    const newDesc = containerEl.createDiv({ cls: "sn-command-settings" });
     newDesc.style.marginBottom = "8px";
 
     function renderNewCommands() {
@@ -748,7 +690,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       const list = this.plugin.settings.newMenuCommands;
 
       for (let i = 0; i < list.length; i++) {
-        renderEntryRow.call(this, newDesc, list, i, () => this.plugin.settings.newMenuCommands, () => renderNewCommands.call(this));
+        renderEntryRow.call(this, newDesc, list, i, () => renderNewCommands.call(this));
       }
 
       const addRow = newDesc.createDiv();
@@ -756,16 +698,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       addRow.style.display = "flex";
       addRow.style.gap = "8px";
 
-      const addBtn = addRow.createEl("button");
-      addBtn.textContent = "+ Add command";
-      addBtn.onclick = async () => {
-        this.plugin.settings.newMenuCommands = [
-          ...this.plugin.settings.newMenuCommands,
-          { label: "New command", commandId: "" },
-        ];
-        await this.plugin.saveSettings();
-        renderNewCommands.call(this);
-      };
+      addCommand.call(this, addRow, list, () => renderNewCommands.call(this));
 
       const addSepBtn = addRow.createEl("button");
       addSepBtn.textContent = "+ Separator";

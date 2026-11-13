@@ -2,6 +2,10 @@ import { App, FuzzySuggestModal, FuzzyMatch, Command, TFolder, TAbstractFile, re
 import { ICON_LIST } from "./generated/icon-list";
 import { CUSTOM_ICON_PREFIX, setCustomIcon, cachedCustomItems } from "./icon-utils";
 
+export function listCommands(app: App): Command[] {
+  return (app as App & { commands: { listCommands(): Command[] } }).commands.listCommands();
+}
+
 export class CommandSuggestModal extends FuzzySuggestModal<Command> {
   private onSelect: (command: Command) => void;
 
@@ -17,7 +21,7 @@ export class CommandSuggestModal extends FuzzySuggestModal<Command> {
   }
 
   getItems(): Command[] {
-    return this.app.commands.listCommands();
+    return listCommands(this.app);
   }
 
   getItemText(command: Command): string {
