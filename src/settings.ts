@@ -1,7 +1,18 @@
-import { PluginSettingTab, Setting, App, setIcon } from "obsidian";
+import { PluginSettingTab, Setting, App, Notice, setIcon } from "obsidian";
 import { listCommands, CommandSuggestModal, IconSuggestModal, FolderSuggestModal } from "./modal";
 import { setCustomIcon, refreshCustomIcons } from "./icon-utils";
 import type SimpleNavigatorPlugin from "./main";
+import { createMenuProfile, NAVIGATOR_MENU_ACTIONS, hasMenuModifiers, sameMenuModifiers } from "./menu-profiles";
+import type { NavigatorMenuAction } from "./menu-profiles";
+
+export interface MenuProfile {
+  name: string;
+  modifiers: { alt: boolean; ctrl: boolean; shift: boolean; meta: boolean };
+  actions: NavigatorMenuAction[];
+  submenus: Record<string, SubmenuEntry[]>;
+  submenuIcons: Record<string, string>;
+  mainMenuCommands: SubmenuEntry[];
+}
 
 export interface SubmenuEntry {
   label: string;
@@ -11,8 +22,11 @@ export interface SubmenuEntry {
   isSeparator?: boolean;
 }
 
+export type NavigatorSort = "manual" | "name-asc" | "name-desc";
+
 export interface PluginSettings {
   orderMap: Record<string, string[]>;
+  sortMode: NavigatorSort;
   hiddenPaths: string[];
   archivedPaths: string[];
   colorMap: Record<string, string>;
@@ -36,10 +50,15 @@ export interface PluginSettings {
   newMenuCommands: SubmenuEntry[];
   customIconsFolder: string;
   confirmDelete: boolean;
+  menuProfiles: MenuProfile[];
+  navigatorAltMenuVersion: number;
+  newNoteLocation: "obsidian" | "root" | "current" | "folder";
+  newNoteFolder: string;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
   orderMap: {},
+  sortMode: "manual",
   hiddenPaths: [],
   archivedPaths: [],
   colorMap: {},
@@ -63,10 +82,15 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   newMenuCommands: [],
   customIconsFolder: "",
   confirmDelete: true,
+  menuProfiles: [],
+  navigatorAltMenuVersion: 0,
+  newNoteLocation: "obsidian",
+  newNoteFolder: "",
 };
 
 export class SimpleNavigatorSettingTab extends PluginSettingTab {
   plugin: SimpleNavigatorPlugin;
+  private selectedMenuIndex = 0;
 
   constructor(app: App, plugin: SimpleNavigatorPlugin) {
     super(app, plugin);
@@ -77,6 +101,33 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl("h2", { text: "Simple Navigator Settings" });
+
+    new Setting(containerEl)
+      .setName("Default location for new notes")
+      .setDesc("Used by New note on empty space in the navigator. Right-clicking a folder always creates the note inside that folder. New folders and script commands use their own rules.")
+      .addDropdown(dropdown => dropdown
+        .addOption("obsidian", "Follow Obsidian settings")
+        .addOption("root", "Vault root")
+        .addOption("current", "Same folder as current note")
+        .addOption("folder", "Specified folder")
+        .setValue(this.plugin.settings.newNoteLocation)
+        .onChange(async value => {
+          this.plugin.settings.newNoteLocation = value as PluginSettings["newNoteLocation"];
+          await this.plugin.saveSettings();
+          this.display();
+        }));
+    if (this.plugin.settings.newNoteLocation === "folder") {
+      new Setting(containerEl)
+        .setName("Folder for new notes")
+        .setDesc(this.plugin.settings.newNoteFolder || "/ (vault root)")
+        .addButton(button => button.setButtonText("Choose folder").onClick(() => {
+          new FolderSuggestModal(this.app, async folder => {
+            this.plugin.settings.newNoteFolder = folder.path === "/" ? "" : folder.path;
+            await this.plugin.saveSettings();
+            this.display();
+          }).open();
+        }));
+    }
 
     new Setting(containerEl)
       .setName("Icon follows color")
@@ -376,16 +427,95 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
 
     renderCustomColors.call(this);
 
-    // --- Submenus ---
-    containerEl.createEl("h3", { text: "Submenus" });
+    containerEl.createEl("h3", { text: "Additional context menus" });
     containerEl.createEl("p", {
+      text: "Plain right-click always opens the basic menu. Each additional menu has its own exact Ctrl / Alt / Shift / Meta combination, navigator actions, commands, and submenus. Unassigned combinations open the basic menu.",
+      cls: "setting-item-description",
+    });
+    const profiles = this.plugin.settings.menuProfiles;
+    this.selectedMenuIndex = Math.max(0, Math.min(this.selectedMenuIndex, profiles.length - 1));
+    const profilePicker = new Setting(containerEl).setName("Menu profile");
+    if (profiles.length > 0) profilePicker.addDropdown(dropdown => {
+      profiles.forEach((entry, index) => dropdown.addOption(String(index), entry.name || "Unnamed menu"));
+      dropdown.setValue(String(this.selectedMenuIndex)).onChange(value => {
+        this.selectedMenuIndex = Number(value);
+        this.display();
+      });
+    });
+    profilePicker.addButton(button => button.setButtonText("Add menu").onClick(async () => {
+      const next = createMenuProfile();
+      // Prefer simple single-key combinations, then combinations of several keys.
+      const masks = [1, 2, 4, 8, ...Array.from({ length: 15 }, (_, index) => index + 1)];
+      next.modifiers = { alt: false, ctrl: false, shift: false, meta: false };
+      for (const mask of masks) {
+        const modifiers = { shift: !!(mask & 1), alt: !!(mask & 2), ctrl: !!(mask & 4), meta: !!(mask & 8) };
+        if (!profiles.some(existing => sameMenuModifiers(existing.modifiers, modifiers))) {
+          next.modifiers = modifiers;
+          break;
+        }
+      }
+      profiles.push(next);
+      this.selectedMenuIndex = profiles.length - 1;
+      await this.plugin.saveSettings();
+      this.display();
+    }));
+    const profile = profiles[this.selectedMenuIndex];
+    const profileEditor = containerEl.createDiv({ cls: "sn-profile-editor" });
+    if (profile) {
+      new Setting(profileEditor).setName("Menu name").addText(text => text.setValue(profile.name).onChange(async value => {
+        profile.name = value;
+        await this.plugin.saveSettings();
+      })).addButton(button => button.setButtonText("Remove menu").onClick(async () => {
+        this.plugin.settings.menuProfiles = profiles.filter(entry => entry !== profile);
+        await this.plugin.saveSettings();
+        this.display();
+      }));
+      const modifierRow = new Setting(profileEditor).setName("Hold while right-clicking");
+      modifierRow.controlEl.style.flexWrap = "wrap";
+      modifierRow.controlEl.style.gap = "6px";
+      const warning = profileEditor.createDiv({ cls: "setting-item-description" });
+      const updateWarning = () => {
+        warning.textContent = hasMenuModifiers(profile.modifiers) ? "" : "Choose at least one key to enable this menu. Plain right-click is reserved for the basic menu.";
+      };
+      for (const [key, label] of [["ctrl", "Ctrl"], ["alt", "Alt"], ["shift", "Shift"], ["meta", "Meta / Command"]] as const) {
+        modifierRow.addToggle(toggle => {
+          toggle.setTooltip(label).setValue(profile.modifiers[key]).onChange(async value => {
+            const next = { ...profile.modifiers, [key]: value };
+            if (hasMenuModifiers(next) && profiles.some(other => other !== profile && sameMenuModifiers(other.modifiers, next))) {
+              toggle.setValue(!value);
+              new Notice("This key combination is already assigned to another menu");
+              return;
+            }
+            profile.modifiers = next;
+            updateWarning();
+            await this.plugin.saveSettings();
+          });
+          const labelEl = modifierRow.controlEl.createSpan({ text: label });
+          labelEl.style.marginRight = "12px";
+        });
+      }
+      updateWarning();
+      profileEditor.createEl("h4", { text: "Navigator actions" });
+      for (const action of NAVIGATOR_MENU_ACTIONS) {
+        new Setting(profileEditor).setName(action.label).addToggle(toggle => toggle.setValue(profile.actions.includes(action.id)).onChange(async value => {
+          profile.actions = value ? [...profile.actions, action.id] : profile.actions.filter(id => id !== action.id);
+          await this.plugin.saveSettings();
+        }));
+      }
+    } else {
+      profileEditor.createEl("p", { text: "No additional menus configured. Use Add menu to create one." });
+    }
+
+    // --- Submenus ---
+    if (profile) profileEditor.createEl("h4", { text: "Submenus" });
+    profileEditor.createEl("p", {
       text: "Named submenus shown in the context menu. Each contains a list of commands.",
       cls: "setting-item-description",
     });
 
     const commandNames = new Map(listCommands(this.app)
       .map(({ id, name }) => [id, name]));
-    const submenuSection = containerEl.createDiv({ cls: "sn-command-settings" });
+    const submenuSection = profileEditor.createDiv({ cls: "sn-command-settings" });
     submenuSection.style.marginBottom = "8px";
 
     function renderSubmenus() {
@@ -407,9 +537,9 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       addSectionBtn.onclick = async () => {
         const name = nameInput.value.trim();
         if (!name) return;
-        if (this.plugin.settings.submenus[name]) return;
-        this.plugin.settings.submenus = {
-          ...this.plugin.settings.submenus,
+        if (profile.submenus[name]) return;
+        profile.submenus = {
+          ...profile.submenus,
           [name]: [],
         };
         await this.plugin.saveSettings();
@@ -424,7 +554,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       const existing = submenuSection.querySelectorAll(".sn-submenu-section");
       for (const el of existing) el.remove();
 
-      for (const [sectionName, entries] of Object.entries(this.plugin.settings.submenus)) {
+      for (const [sectionName, entries] of Object.entries(profile.submenus)) {
 
 
         const sectionDiv = submenuSection.createDiv();
@@ -443,7 +573,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
         const sectionIconBtn = action(headerRow, "", "Choose section icon");
         const renderSectionIcon = () => {
           sectionIconBtn.empty();
-          const icon = this.plugin.settings.submenuIcons[sectionName];
+          const icon = profile.submenuIcons[sectionName];
           if (icon) {
             setCustomIcon(sectionIconBtn, icon, this.app);
           } else {
@@ -453,8 +583,8 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
         renderSectionIcon();
         sectionIconBtn.onclick = () => {
           new IconSuggestModal(this.app, this.plugin.settings.customIconsFolder ?? "", (iconName) => {
-            this.plugin.settings.submenuIcons = {
-              ...this.plugin.settings.submenuIcons,
+            profile.submenuIcons = {
+              ...profile.submenuIcons,
               [sectionName]: iconName,
             };
             renderSectionIcon();
@@ -469,9 +599,9 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
 
         const removeSectionBtn = action(headerRow, "trash-2", "Remove section");
         removeSectionBtn.onclick = async () => {
-          const next = { ...this.plugin.settings.submenus };
+          const next = { ...profile.submenus };
           delete next[sectionName];
-          this.plugin.settings.submenus = next;
+          profile.submenus = next;
           await this.plugin.saveSettings();
           renderSubmenuSections.call(this);
         };
@@ -493,7 +623,7 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
         addSepBtn.textContent = "+ Separator";
         addSepBtn.onclick = async () => {
           entries.push({ label: "", commandId: "", isSeparator: true });
-          this.plugin.settings.submenus = { ...this.plugin.settings.submenus };
+          profile.submenus = { ...profile.submenus };
           await this.plugin.saveSettings();
           renderSubmenuSections.call(this);
         };
@@ -501,18 +631,18 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
     }
 
     // --- Main menu commands ---
-    containerEl.createEl("h3", { text: "Menu commands" });
-    containerEl.createEl("p", {
+    if (profile) profileEditor.createEl("h4", { text: "Menu commands" });
+    profileEditor.createEl("p", {
       text: "Commands shown in this profile, outside any submenu.",
       cls: "setting-item-description",
     });
 
-    const mainDesc = containerEl.createDiv({ cls: "sn-command-settings" });
+    const mainDesc = profileEditor.createDiv({ cls: "sn-command-settings" });
     mainDesc.style.marginBottom = "8px";
 
     function renderMainCommands() {
       mainDesc.empty();
-      const list = this.plugin.settings.mainMenuCommands;
+      const list = profile.mainMenuCommands;
 
       for (let i = 0; i < list.length; i++) {
         renderEntryRow.call(this, mainDesc, list, i, () => renderMainCommands.call(this));
@@ -528,8 +658,8 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
       const addSepBtn = addRow.createEl("button");
       addSepBtn.textContent = "+ Separator";
       addSepBtn.onclick = async () => {
-        this.plugin.settings.mainMenuCommands = [
-          ...this.plugin.settings.mainMenuCommands,
+        profile.mainMenuCommands = [
+          ...profile.mainMenuCommands,
           { label: "", commandId: "", isSeparator: true },
         ];
         await this.plugin.saveSettings();
@@ -713,7 +843,9 @@ export class SimpleNavigatorSettingTab extends PluginSettingTab {
     }
 
     renderNewCommands.call(this);
-    renderSubmenus.call(this);
-    renderMainCommands.call(this);
+    if (profile) {
+      renderSubmenus.call(this);
+      renderMainCommands.call(this);
+    }
   }
 }

@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, EventRef } from "obsidian";
+import { ItemView, WorkspaceLeaf, EventRef, TFile } from "obsidian";
 import type SimpleNavigatorPlugin from "./main";
 import TreeView from "./components/TreeView.svelte";
 
@@ -30,6 +30,10 @@ export class SimpleNavigatorView extends ItemView {
     return "folder-tree";
   }
 
+  async revealFile(file: TFile) {
+    await this.component?.revealFile(file);
+  }
+
   async toggleShowHidden() {
     this.showHidden = !this.showHidden;
     this.plugin.settings.showHidden = this.showHidden;
@@ -49,6 +53,8 @@ export class SimpleNavigatorView extends ItemView {
         settings: this.plugin.settings,
         showHidden: this.showHidden,
         refreshKey: this.refreshKey,
+        getSettings: () => this.plugin.settings,
+        renameItem: this.plugin.renameItem.bind(this.plugin),
         onUpdateSettings: async (s: typeof this.plugin.settings) => {
           this.plugin.settings = s;
           await this.plugin.saveSettings();

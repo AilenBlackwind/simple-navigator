@@ -15,6 +15,13 @@ context menu.
 - **Manual ordering.** Drag-and-drop to reorder files and folders; the order is
   remembered per folder. Default alphabetical sort still applies to items you
   haven't reordered.
+- **Toolbar.** Create a note or folder, switch between manual order and either
+  alphabetical order, follow the active file, or collapse/expand all folders. Alphabetical sorting preserves
+  your saved manual order and still lets you move items between folders.
+- **Folder drop targets.** The middle of a folder title drops items into that
+  folder. Hover over a collapsed folder while dragging to expand it. In manual
+  mode, the edges show where to insert the items as siblings. Use **Reset folder
+  order** from a folder's context menu to clear its manual order.
 - **Colors & icons.** Assign a custom color and icon to any file or folder from
   the context menu. Optionally make icons inherit the color. Add your own custom
   colors in settings.
@@ -28,11 +35,47 @@ context menu.
   extensions in filenames (e.g. `.js, .pdf, .txt`).
 - **Rename on double-click.** Optional: double-click a file/folder to rename it
   inline instead of opening/toggling.
-- **Configurable context menu.** Build named submenus and standalone commands
-  backed by any Obsidian command ID (search by name to fill the ID).
+- **Configurable context menus.** Keep ordinary right-click short and assign
+  separate menus to Ctrl/Alt/Shift/Meta combinations. Each profile has its own
+  navigator actions, named submenus, and Obsidian commands.
 - **Multi-select.** Shift-click for ranges, Ctrl/Cmd-click to toggle individual
   items; Delete/Backspace removes the selection.
-- **Auto-reveal.** Optionally expand parents of the active file.
+- **Auto-reveal.** Optionally expand parents of the active file and scroll its
+  row into view. Use **Reveal active file in navigator** from the command palette
+  to reveal and briefly highlight it once.
+- **Keyboard navigation.** Use the arrow keys and Home/End to move around the
+  tree, Enter or Space to open a file or toggle a folder, and F2 to rename.
+
+## Context menu profiles
+
+Ordinary right-click shows the basic actions: create notes/folders, the configured
+`New...` commands, duplicate, rename, and delete. Right-clicking empty space shows
+the creation actions.
+
+On the first upgrade, existing custom submenus and standalone commands move into
+a `Navigator` profile opened with **Shift + right-click**, together with move,
+hide/archive, colors, and icons. Existing `New...` commands stay in the basic menu.
+
+The built-in navigator actions are also available in an **Alt + right-click**
+profile. This profile is added once when upgrading; custom command profiles stay
+as configured, and later changes to the Alt profile are preserved.
+
+Open **Simple Navigator Settings → Additional context menus** to add, rename,
+or remove profiles. Select the exact key combination, choose navigator actions,
+and edit that profile's commands and submenus. Combinations must be unique;
+a profile with no keys selected is inactive. An unassigned combination opens the
+basic menu. Commands receive the file or folder that was right-clicked through
+`plugin.lastClicked`.
+
+## Location of new notes
+
+In **Simple Navigator Settings → Default location for new notes**, choose Obsidian's
+setting (the default), the vault root, the active note's folder, or a specific
+folder selected from the vault. This applies to **New note** on empty tree space.
+Creating a note from a folder's context menu always uses that folder. Custom
+creation scripts and **New folder** retain their own behavior. If a specified
+folder is missing, creation stops with a notice instead of silently using another
+location. Renaming or moving that folder updates the setting automatically.
 
 ## Installation (development / manual)
 
@@ -48,7 +91,10 @@ context menu.
 npm install
 npm run dev      # watch mode (rebuilds on save)
 # or
-npm run build    # one-shot production build → main.js
+npm run build    # one-shot production build → main.js in this vault
+npm test         # regression checks
+npm run typecheck
+npm run deploy:main # explicitly build and copy to MainVault
 ```
 
 Requirements: Node.js, npm. Output is written to `main.js`.
@@ -61,6 +107,7 @@ src/
   SimpleNavigatorView.ts  ItemView that hosts the Svelte tree
   settings.ts             Settings model + settings tab UI
   modal.ts                Fuzzy-suggest modals (command/icon/folder pickers)
+  menu-profiles.ts        Modifier matching, legacy migration, custom commands
   utils.ts                Sorting, file-icon mapping, settings cleanup
   drag-state.ts           Drag-and-drop geometry + drop-target resolution
   styles.css              (root styles.css is the canonical copy)

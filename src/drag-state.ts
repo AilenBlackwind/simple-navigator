@@ -1,4 +1,5 @@
 import { normalizePath } from "obsidian";
+import type { PluginSettings } from "./settings";
 
 export const dragState: {
   fromPath: string;
@@ -23,7 +24,6 @@ export const dragState: {
 };
 
 let dropIndicatorEl: HTMLDivElement | null = null;
-let _lastHighlightAt = 0;
 
 export function createDropIndicator(color: string) {
   document.querySelectorAll(".sn-drop-indicator").forEach((el) => el.remove());
@@ -39,24 +39,50 @@ export function createDropIndicator(color: string) {
   document.body.appendChild(dropIndicatorEl);
 }
 
-export function updateDropIndicator(relatedEl: HTMLElement, x: number, y: number) {
+function updateDropIndicator(relatedEl: HTMLElement, after: boolean) {
   if (!dropIndicatorEl || !dropIndicatorEl.isConnected) return;
   const rect = relatedEl.getBoundingClientRect();
   const tree = relatedEl.closest(".simple-navigator-tree") as HTMLElement;
   if (!tree) return;
   const treeRect = tree.getBoundingClientRect();
-  const midY = rect.top + rect.height / 2;
   const left = treeRect.left + 4;
   const width = treeRect.width - 8;
   const px = 1 / window.devicePixelRatio;
   dropIndicatorEl.style.height = px + "px";
-  dropIndicatorEl.style.top = `${Math.round(y > midY ? rect.bottom : rect.top)}px`;
+  dropIndicatorEl.style.top = `${Math.round(after ? rect.bottom : rect.top)}px`;
   dropIndicatorEl.style.left = `${left}px`;
   dropIndicatorEl.style.width = `${width}px`;
   dropIndicatorEl.style.display = "block";
 }
 
 let guideLineAnimEl: HTMLDivElement | null = null;
+let expandTimer: ReturnType<typeof setTimeout> | undefined;
+let expandTarget: HTMLElement | null = null;
+let expandPointerY = 0;
+
+function cancelDropExpansion() {
+  if (expandTimer !== undefined) clearTimeout(expandTimer);
+  expandTimer = undefined;
+  expandTarget = null;
+}
+
+function scheduleDropExpansion(target: DropTarget, tree: Element, y: number, expand?: (path: string) => void) {
+  const folder = target.itemEl;
+  const path = target.targetFolder;
+  if (!expand || !path || !folder?.classList.contains("is-collapsed")) {
+    cancelDropExpansion();
+    return;
+  }
+  expandPointerY = y;
+  if (expandTarget === folder) return;
+  cancelDropExpansion();
+  expandTarget = folder;
+  expandTimer = setTimeout(() => {
+    cancelDropExpansion();
+    if (dragState.itemPath && dragState.targetFolder === path && folder.isConnected
+      && resolveDropTarget(tree, expandPointerY)?.targetFolder === path) expand(path);
+  }, 600);
+}
 
 function ensureGuideLineEl(): HTMLDivElement {
   if (guideLineAnimEl?.isConnected) return guideLineAnimEl;
@@ -74,27 +100,16 @@ function hideGuideLineAnim() {
   if (guideLineAnimEl) guideLineAnimEl.style.visibility = "hidden";
 }
 
-export function clearFolderHighlight(force = false) {
-  if (!force && Date.now() - _lastHighlightAt < 100) return;
+export function clearFolderHighlight() {
   hideGuideLineAnim();
-  document.querySelectorAll(".sn-drop-target").forEach((el) => {
-    el.classList.remove("sn-drop-target");
-    const title = el.querySelector(".nav-folder-title") as HTMLElement | null;
-    if (title) title.style.removeProperty("background-color");
-  });
+  document.querySelectorAll(".sn-drop-target").forEach(el => el.classList.remove("sn-drop-target"));
 }
 
 export function highlightFolder(el: HTMLElement) {
-  clearFolderHighlight(true);
+  clearFolderHighlight();
   el.classList.add("sn-drop-target");
   const title = el.querySelector(".nav-folder-title") as HTMLElement | null;
-  if (!title) { _lastHighlightAt = Date.now(); return; }
-  const snColor = title.style.getPropertyValue("--sn-color").trim();
-  if (snColor) {
-    title.style.backgroundColor = `color-mix(in srgb, ${snColor} 8%, transparent)`;
-  } else {
-    title.style.backgroundColor = "var(--background-modifier-hover)";
-  }
+  const snColor = title?.style.getPropertyValue("--sn-color").trim();
 
   const childrenContainer = el.querySelector(".nav-folder-children") as HTMLElement | null;
   const tree = el.closest(".simple-navigator-tree") as HTMLElement | null;
@@ -119,21 +134,21 @@ export function highlightFolder(el: HTMLElement) {
       anim.style.width = (1 / window.devicePixelRatio) + "px";
     }
   }
-  _lastHighlightAt = Date.now();
 }
 
 export function removeDropIndicator() {
+  cancelDropExpansion();
   stopDragScroll();
   clearFolderHighlight();
-  hideGuideLineAnim();
   if (dropIndicatorEl) {
     dropIndicatorEl.style.display = "none";
   }
 }
 
 export function destroyDropIndicator() {
+  cancelDropExpansion();
   stopDragScroll();
-  clearFolderHighlight(true);
+  clearFolderHighlight();
   hideGuideLineAnim();
   if (guideLineAnimEl) {
     guideLineAnimEl.remove();
@@ -177,9 +192,39 @@ export interface DropTarget {
   targetFolder: string | null;
 }
 
-export function resolveDropTarget(x: number, y: number): DropTarget | null {
-  const tree = document.querySelector(".simple-navigator-tree");
-  if (!tree) return null;
+export function updateMoveDrop(event: DragEvent, tree: Element, alphabetical: boolean, expandFolder?: (path: string) => void) {
+  const { clientY, dataTransfer } = event;
+  const target = resolveDropTarget(tree, clientY);
+  const destination = target?.targetFolder ?? target?.containerPath ?? "";
+  const paths = dragState.batchPaths.length ? dragState.batchPaths : [dragState.itemPath];
+  const valid = target && !paths.some(path => destination === path || destination.startsWith(path + "/"))
+    && (!alphabetical || paths.some(path => path.split("/").slice(0, -1).join("/") !== destination));
+
+  dragState.toPath = valid ? destination : "";
+  dragState.targetFolder = valid ? target.targetFolder : null;
+  dragState.newIndex = valid ? target.newIndex : -1;
+  if (dataTransfer) dataTransfer.dropEffect = valid ? "move" : "none";
+  if (!valid) {
+    removeDropIndicator();
+    return;
+  }
+
+  const insert = !alphabetical && !target.targetFolder && target.itemEl;
+  if (insert) {
+    const siblings = Array.from(insert.parentElement?.children ?? []);
+    updateDropIndicator(insert, target.newIndex > siblings.indexOf(insert));
+  }
+  else if (dropIndicatorEl) dropIndicatorEl.style.display = "none";
+
+  const folder = target.targetFolder ? target.itemEl : target.itemEl?.parentElement?.closest<HTMLElement>(".nav-folder[data-path]")
+    ?? Array.from(tree.querySelectorAll<HTMLElement>(".nav-folder[data-path]")).find(el => el.dataset.path === destination);
+  if (folder) highlightFolder(folder);
+  else clearFolderHighlight();
+  scheduleDropExpansion(target, tree, clientY, expandFolder);
+  updateAutoScroll(clientY);
+}
+
+function resolveDropTarget(tree: Element, y: number): DropTarget | null {
   const all = tree.querySelectorAll<HTMLElement>(".nav-folder-children[data-folder-path]");
   const matching: { container: HTMLElement; rect: DOMRect }[] = [];
 
@@ -258,30 +303,19 @@ export function resolveDropTarget(x: number, y: number): DropTarget | null {
 
     if (y >= cr.top && y <= cr.bottom) {
       if (child.classList.contains("nav-folder")) {
-        const childrenContainer = child.querySelector(".nav-folder-children") as HTMLElement | null;
-
-        if (childrenContainer && childrenContainer.offsetHeight === 0) {
-          const edgeSize = cr.height * 0.25;
-          if (y <= cr.top + edgeSize) {
-            return { itemEl: child, containerPath, newIndex: computeNewIndex(child, y), targetFolder: null };
-          }
-          if (y >= cr.bottom - edgeSize) {
-            return { itemEl: child, containerPath, newIndex: computeNewIndex(child, y), targetFolder: null };
-          }
-          return { itemEl: child, containerPath, newIndex: -1, targetFolder: child.dataset.path || null };
-        }
-
         const title = child.querySelector(".nav-folder-title");
-
         if (title) {
           const tr = title.getBoundingClientRect();
-    if (y >= tr.top - DROP_ZONE_BUFFER && y <= tr.bottom) {
-            const mid = tr.top + tr.height / 2;
-            const r = { itemEl: child, containerPath, newIndex: y > mid ? i + 1 : i, targetFolder: null };
-            return r;
+          if (y <= tr.bottom && tr.height > 0) {
+            const ratio = (y - tr.top) / tr.height;
+            if (ratio > 0.25 && ratio < 0.75) {
+              return { itemEl: child, containerPath, newIndex: -1, targetFolder: child.dataset.path || null };
+            }
+            return { itemEl: child, containerPath, newIndex: ratio >= 0.75 ? i + 1 : i, targetFolder: null };
           }
         }
 
+        const childrenContainer = child.querySelector(".nav-folder-children") as HTMLElement | null;
         if (!childrenContainer) {
           return { itemEl: child, containerPath, newIndex: -1, targetFolder: child.dataset.path || null };
         }
@@ -343,7 +377,8 @@ export function resolveDropTarget(x: number, y: number): DropTarget | null {
   return { itemEl: children.length > 0 ? children[children.length - 1] : null, containerPath, newIndex: children.length, targetFolder: null };
 }
 
-export function updatePathsOnMove<T extends Record<string, unknown>>(settings: T, oldPath: string, newPath: string): T {
+export function updatePathsOnMove(settings: PluginSettings, oldPath: string, newPath: string): PluginSettings {
+  if (oldPath === newPath) return settings;
   const prefix = oldPath ? oldPath + "/" : "";
   const replace = (key: string) => {
     if (key === oldPath) return newPath;
@@ -351,6 +386,7 @@ export function updatePathsOnMove<T extends Record<string, unknown>>(settings: T
     return key;
   };
   const next = { ...settings };
+  if (settings.newNoteFolder) next.newNoteFolder = replace(settings.newNoteFolder);
   for (const mapKey of ["colorMap", "iconMap", "orderMap", "folderCollapseIconMap"] as const) {
     const val = next[mapKey];
     if (!val) continue;
@@ -359,12 +395,25 @@ export function updatePathsOnMove<T extends Record<string, unknown>>(settings: T
     for (const k of Object.keys(obj)) {
       newObj[replace(k)] = obj[k];
     }
-    (next as Record<string, unknown>)[mapKey] = newObj;
+    Object.assign(next, { [mapKey]: newObj });
   }
   for (const arrKey of ["hiddenPaths", "collapsedPaths", "archivedPaths"] as const) {
     const val = next[arrKey];
     if (!val) continue;
-    (next as Record<string, unknown>)[arrKey] = (val as string[]).map((p: string) => replace(p));
+    Object.assign(next, { [arrKey]: (val as string[]).map((p: string) => replace(p)) });
+  }
+  const parentOf = (path: string) => path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+  const oldParent = parentOf(oldPath);
+  const newParent = parentOf(newPath);
+  const oldName = oldPath.split("/").pop()!;
+  const newName = newPath.split("/").pop()!;
+  const oldOrder = next.orderMap[oldParent];
+  if (oldParent === newParent) {
+    if (oldOrder) next.orderMap[oldParent] = [...new Set(oldOrder.map(name => name === oldName ? newName : name))];
+  } else {
+    if (oldOrder) next.orderMap[oldParent] = oldOrder.filter(name => name !== oldName);
+    const targetOrder = next.orderMap[newParent];
+    if (targetOrder && !targetOrder.includes(newName)) next.orderMap[newParent] = [...targetOrder, newName];
   }
   return next;
 }

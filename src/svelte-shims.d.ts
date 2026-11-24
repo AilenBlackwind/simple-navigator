@@ -1,4 +1,2 @@
-declare module "*.svelte" {
-  import { SvelteComponent } from "svelte";
-  export default SvelteComponent;
-}
+// Svelte 4 provides the *.svelte module declaration.
+import "svelte";

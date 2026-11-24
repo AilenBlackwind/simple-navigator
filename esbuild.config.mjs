@@ -4,10 +4,13 @@ import builtins from "builtin-modules";
 import esbuildSvelte from "esbuild-svelte";
 import sveltePreprocess from "svelte-preprocess";
 import { execSync } from "child_process";
+import { existsSync } from "fs";
 
 // Pre-build: fetch full Lucide icon list
 try {
-  execSync("node scripts/fetch-icons.mjs", { stdio: "inherit" });
+  if (!existsSync("src/generated/icon-list.ts")) {
+    execSync("node scripts/fetch-icons.mjs", { stdio: "inherit" });
+  }
 } catch {
   process.exit(1);
 }

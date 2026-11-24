@@ -5,7 +5,10 @@
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
-    "build": "node esbuild.config.mjs production && node copy-to-main.js"
+    "build": "node esbuild.config.mjs production",
+    "deploy:main": "npm run build && node copy-to-main.js",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --test-isolation=none tests/*.test.cjs"
   },
   "devDependencies": {
     "@types/node": "^16.11.6",

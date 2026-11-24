@@ -1,11 +1,23 @@
-import { App, TAbstractFile, TFile, TFolder, Vault, MarkdownView, normalizePath } from "obsidian";
-import { PluginSettings } from "./settings";
+import { App, TAbstractFile, TFile, TFolder, Vault, MarkdownView, Notice, normalizePath } from "obsidian";
+import type { NavigatorSort, PluginSettings } from "./settings";
+
+export function getFolderPaths(vault: Vault): string[] {
+  const root = vault.getRoot();
+  return vault.getAllLoadedFiles()
+    .filter(file => file instanceof TFolder && file !== root)
+    .map(file => file.path);
+}
 
 export function sortWithOrder(
   children: TAbstractFile[],
   orderMap: Record<string, string[]>,
-  parentPath: string
+  parentPath: string,
+  _refreshKey?: number,
+  mode: NavigatorSort = "manual"
 ): TAbstractFile[] {
+  if (mode !== "manual") {
+    return [...children].sort((a, b) => defaultSortFn(a, b, mode === "name-desc" ? -1 : 1));
+  }
   const order = orderMap[parentPath];
   if (!order || order.length === 0) {
     return [...children].sort(defaultSortFn);
@@ -31,13 +43,13 @@ export function sortWithOrder(
   return [...known, ...unknown];
 }
 
-export function defaultSortFn(a: TAbstractFile, b: TAbstractFile): number {
+export function defaultSortFn(a: TAbstractFile, b: TAbstractFile, direction = 1): number {
   const aIsFolder = a instanceof TFolder;
   const bIsFolder = b instanceof TFolder;
   if (aIsFolder !== bIsFolder) {
     return aIsFolder ? -1 : 1;
   }
-  return a.name.localeCompare(b.name);
+  return direction * a.name.localeCompare(b.name);
 }
 
 export function countFiles(
@@ -108,13 +120,48 @@ export function getVisibleExtSet(
   return exts.length > 0 ? new Set(exts) : null;
 }
 
-export async function deleteFile(app: App, file: TAbstractFile): Promise<void> {
-  const trashOption = app.vault.getConfig("trashOption");
-  if (trashOption === "permanent") {
-    await app.vault.delete(file);
-  } else {
-    await app.vault.trash(file, trashOption === "system");
+export function getDefaultNoteFolder(app: App, settings: PluginSettings): TFolder | null {
+  const active = app.workspace.getActiveFile();
+  switch (settings.newNoteLocation) {
+    case "root": return app.vault.getRoot();
+    case "current": return active?.parent ?? app.vault.getRoot();
+    case "folder": {
+      const path = normalizePath(settings.newNoteFolder.trim());
+      const folder = !path || path === "/" ? app.vault.getRoot() : app.vault.getAbstractFileByPath(path);
+      if (folder instanceof TFolder) return folder;
+      new Notice("The configured new-note folder does not exist. Choose a folder in Simple Navigator settings.");
+      return null;
+    }
+    default: return app.fileManager.getNewFileParent(active?.path ?? "");
   }
+}
+
+export async function deleteFile(app: App, file: TAbstractFile): Promise<void> {
+  if (typeof app.fileManager.trashFile === "function") {
+    await app.fileManager.trashFile(file);
+    return;
+  }
+  // Compatibility with Obsidian versions before FileManager.trashFile (1.6.6).
+  const vault = app.vault as Vault & { getConfig(key: string): unknown };
+  const trashOption = vault.getConfig("trashOption");
+  if (trashOption === "permanent") await vault.delete(file);
+  else await vault.trash(file, trashOption === "system");
+}
+
+export function canDeleteSelection(event: KeyboardEvent, tree: HTMLElement | undefined): boolean {
+  if (!tree || event.defaultPrevented || event.repeat || event.isComposing) return false;
+  if (event.key !== "Delete" && event.key !== "Backspace") return false;
+  if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false;
+  const target = event.target as HTMLElement | null;
+  return !!target && tree.contains(target) && !target.isContentEditable
+    && !target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]');
+}
+
+export function generateFileLinks(app: App, sourcePath: string, itemPaths: string[]): string[] {
+  return itemPaths
+    .map((path) => app.vault.getAbstractFileByPath(path))
+    .filter((file): file is TFile => file instanceof TFile && file.path !== sourcePath)
+    .map((file) => app.fileManager.generateMarkdownLink(file, sourcePath));
 }
 
 // Append a wiki link for each of `itemPaths` to the end of the note at
@@ -126,15 +173,12 @@ export async function appendWikiLinksToNote(
   itemPaths: string[]
 ): Promise<void> {
   const target = app.vault.getAbstractFileByPath(targetPath);
-  if (!(target instanceof TFile)) return;
+  if (!(target instanceof TFile) || target.extension.toLowerCase() !== "md") return;
 
   const dragged = new Set(itemPaths);
   if (dragged.has(targetPath)) return;
 
-  const links = itemPaths
-    .map((p) => app.vault.getAbstractFileByPath(p))
-    .filter((f): f is TFile => f instanceof TFile && f.path !== targetPath)
-    .map((f) => `[[${f.basename}]]`);
+  const links = generateFileLinks(app, target.path, itemPaths);
   if (links.length === 0) return;
 
   const text = links.join("\n") + "\n";
@@ -152,8 +196,7 @@ export async function appendWikiLinksToNote(
     return;
   }
 
-  let content = await app.vault.read(target);
-  if (content.length > 0 && !content.endsWith("\n")) content += "\n";
-  content += text;
-  await app.vault.modify(target, content);
+  await app.vault.process(target, (content) =>
+    content + (content.length > 0 && !content.endsWith("\n") ? "\n" : "") + text
+  );
 }

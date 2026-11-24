@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { TFile, TFolder, setIcon, Menu, normalizePath } from "obsidian";
+  import { TFile, TFolder, setIcon, Menu, Notice, normalizePath } from "obsidian";
   import type { App, TAbstractFile } from "obsidian";
   import { sortWithOrder, defaultSortFn, countFiles, getFileIcon, getVisibleExtSet, deleteFile, appendWikiLinksToNote } from "../utils";
   import { setCustomIcon } from "../icon-utils";
-  import { dragState, createDropIndicator, updateDropIndicator, removeDropIndicator, destroyDropIndicator, clearFolderHighlight, highlightFolder, resolveDropTarget, updatePathsOnMove, updateAutoScroll, highlightLinkTarget, clearLinkTargetHighlight } from "../drag-state";
+  import { dragState, createDropIndicator, removeDropIndicator, destroyDropIndicator, updateMoveDrop, updateAutoScroll, highlightLinkTarget, clearLinkTargetHighlight } from "../drag-state";
   import type { PluginSettings } from "../settings";
+  import { matchingMenuProfile, appendProfileCommands } from "../menu-profiles";
   import { IconSuggestModal, MoveToModal } from "../modal";
 import { showConfirmModal } from "../confirm-modal";
 
@@ -18,6 +19,8 @@ import { showConfirmModal } from "../confirm-modal";
   export let selectedPaths: Set<string> = new Set();
   export let onSelect: (path: string, shiftKey: boolean, ctrlKey: boolean) => void = () => {};
   export let onClearSelection: () => void = () => {};
+  export let onExpandDropFolder: (path: string) => void;
+  export let onResetFolderOrder: (path: string) => Promise<void>;
   export let onSortEnd: (detail: {
     fromPath: string;
     toPath: string;
@@ -25,8 +28,10 @@ import { showConfirmModal } from "../confirm-modal";
     newIndex: number;
     itemPath: string;
     batchPaths?: string[];
-  }) => void;
+  }) => Promise<void>;
   export let onUpdateSettings: (s: PluginSettings) => Promise<void>;
+
+  export let renameItem: (file: TAbstractFile, path: string) => Promise<void>;
 
   let collapsed = settings.collapsedPaths.includes(file.path);
   $: collapsed = settings.collapsedPaths.includes(file.path);
@@ -67,7 +72,7 @@ import { showConfirmModal } from "../confirm-modal";
   $: rawChildren = isFolder
     ? isArchived
       ? [...(file as TFolder).children].sort(defaultSortFn)
-      : sortWithOrder([...(file as TFolder).children], settings.orderMap, file.path, refreshKey)
+      : sortWithOrder([...(file as TFolder).children], settings.orderMap, file.path, refreshKey, settings.sortMode)
     : [];
 
   $: children = showHidden
@@ -167,29 +172,36 @@ import { showConfirmModal } from "../confirm-modal";
     editingPath = file.path;
   }
 
-  async function saveRename() {
+  async function saveRename(restoreFocus = false) {
     if (editingPath !== file.path) return;
+    const row = renameInputEl?.closest<HTMLElement>('[role="treeitem"]');
+    const tree = row?.closest<HTMLElement>(".simple-navigator-tree");
     const newName = renameInputEl?.value.trim();
     const strippedName = !isFolder ? file.name.replace(/^(.+?)\.([^.]+)$/, "$1") : file.name;
     if (!newName || newName === strippedName) {
       editingPath = null;
+      if (restoreFocus) row?.focus({ preventScroll: true });
       return;
     }
     const parentPath = file.parent ? file.parent.path : "";
     const ext = file instanceof TFile ? file.extension : "";
     const finalName = ext && !newName.endsWith("." + ext) ? newName + "." + ext : newName;
     const newPath = parentPath ? normalizePath(`${parentPath}/${finalName}`) : finalName;
-    const oldPath = file.path;
-    const savedSettings = settings;
+    // Clear editing before awaiting: blur must not submit this rename twice.
+    editingPath = null;
+    if (restoreFocus) row?.focus({ preventScroll: true });
     try {
-      settings = updatePathsOnMove(settings, oldPath, newPath);
-      await app.fileManager.renameFile(file, newPath);
-    } catch {
-      settings = savedSettings;
-      editingPath = null;
-      return;
+      await renameItem(file, newPath);
+      if (restoreFocus && row && tree) {
+        requestAnimationFrame(() => {
+          if (!tree.isConnected || (document.activeElement !== row && document.activeElement !== document.body)) return;
+          tree.querySelector<HTMLElement>(`[role="treeitem"][data-path="${CSS.escape(newPath)}"]`)?.focus({ preventScroll: true });
+        });
+      }
+    } catch (error) {
+      console.error("Rename failed:", error);
+      new Notice("Could not rename: " + (error instanceof Error ? error.message : String(error)));
     }
-    await onUpdateSettings(settings);
     editingPath = null;
   }
 
@@ -200,9 +212,12 @@ import { showConfirmModal } from "../confirm-modal";
   function handleRenameKeydown(e: KeyboardEvent) {
     if (e.key === "Enter") {
       e.preventDefault();
-      saveRename();
+      void saveRename(true);
     } else if (e.key === "Escape") {
+      e.preventDefault();
+      const row = renameInputEl?.closest<HTMLElement>('[role="treeitem"]');
       cancelRename();
+      row?.focus({ preventScroll: true });
     }
   }
 
@@ -290,6 +305,7 @@ import { showConfirmModal } from "../confirm-modal";
     event.stopPropagation();
 
     const menu = new Menu();
+    const profile = matchingMenuProfile(event, settings.menuProfiles);
     const pluginInstance = () => (app as any).plugins.plugins['simple-navigator'];
 
     function handleMoveTo() {
@@ -301,410 +317,376 @@ import { showConfirmModal } from "../confirm-modal";
       }).open();
     }
 
-    if (isFolder) {
-      menu.addItem((item) =>
-        item
-          .setTitle("New note")
-          .setIcon("file-plus")
-          .onClick(async () => {
-            const folder = file as TFolder;
-            const path = app.vault.getAvailablePath(normalizePath(folder.path + "/Untitled"), "md");
-            await app.vault.create(path, "");
-            const f = app.vault.getAbstractFileByPath(path);
-            if (f instanceof TFile) {
-              await app.workspace.getLeaf().openFile(f);
-            }
-          })
-      );
-      menu.addItem((item) =>
-        item
-          .setTitle("New folder")
-          .setIcon("folder-plus")
-          .onClick(async () => {
-            const folder = file as TFolder;
-            const path = app.vault.getAvailablePath(normalizePath(folder.path + "/New folder"), "");
-            await app.vault.createFolder(path);
-          })
-      );
-      if (settings.newMenuCommands && settings.newMenuCommands.length > 0) {
-        menu.addItem((item) => {
-          item.setTitle("New...").setIcon("plus-circle");
-          const sub = item.setSubmenu();
-          for (const cmd of settings.newMenuCommands) {
-            if (!cmd.commandId) continue;
-            sub.addItem((s) => {
-              s.setTitle(cmd.label);
-              if (cmd.icon) s.setIcon(cmd.icon);
-              s.onClick(() => {
-                const p = pluginInstance();
-                if (p) p.setLastClicked(file);
-                app.commands.executeCommandById(cmd.commandId);
-              });
-            });
-          }
-        });
-      }
-      menu.addSeparator();
-      menu.addItem((item) =>
-        item
-          .setTitle("Duplicate")
-          .setIcon("copy")
-          .onClick(async () => {
-            if (file instanceof TFolder) {
-              const parentPath = file.parent?.path || "";
-              let newName = file.name + " (copy)";
-              let newPath = parentPath ? normalizePath(`${parentPath}/${newName}`) : newName;
-              let counter = 1;
-              while (app.vault.getAbstractFileByPath(newPath)) {
-                newName = file.name + ` (copy ${counter})`;
-                newPath = parentPath ? normalizePath(`${parentPath}/${newName}`) : newName;
-                counter++;
+    if (!profile) {
+      if (isFolder) {
+        menu.addItem((item) =>
+          item
+            .setTitle("New note")
+            .setIcon("file-plus")
+            .onClick(async () => {
+              const folder = file as TFolder;
+              const path = app.vault.getAvailablePath(normalizePath(folder.path + "/Untitled"), "md");
+              await app.vault.create(path, "");
+              const f = app.vault.getAbstractFileByPath(path);
+              if (f instanceof TFile) {
+                await app.workspace.getLeaf().openFile(f);
               }
-              try {
-                await duplicateFolderRecursive(file, newPath);
-                const srcPrefix = file.path + "/";
-                const orderMap = { ...settings.orderMap };
-                for (const [key, val] of Object.entries(settings.orderMap)) {
-                  if (key === file.path) {
-                    orderMap[newPath] = [...val];
-                  } else if (key.startsWith(srcPrefix)) {
-                    orderMap[newPath + key.slice(srcPrefix.length - 1)] = [...val];
-                  }
+            })
+        );
+        menu.addItem((item) =>
+          item
+            .setTitle("New folder")
+            .setIcon("folder-plus")
+            .onClick(async () => {
+              const folder = file as TFolder;
+              const path = app.vault.getAvailablePath(normalizePath(folder.path + "/New folder"), "");
+              await app.vault.createFolder(path);
+            })
+        );
+        if (settings.newMenuCommands && settings.newMenuCommands.length > 0) {
+          menu.addItem((item) => {
+            item.setTitle("New...").setIcon("plus-circle");
+            const sub = item.setSubmenu();
+            for (const cmd of settings.newMenuCommands) {
+              if (!cmd.commandId) continue;
+              sub.addItem((s) => {
+                s.setTitle(cmd.label);
+                if (cmd.icon) s.setIcon(cmd.icon);
+                s.onClick(() => {
+                  const p = pluginInstance();
+                  if (p) p.setLastClicked(file);
+                  app.commands.executeCommandById(cmd.commandId);
+                });
+              });
+            }
+          });
+        }
+        menu.addSeparator();
+        menu.addItem((item) =>
+          item
+            .setTitle("Duplicate")
+            .setIcon("copy")
+            .onClick(async () => {
+              if (file instanceof TFolder) {
+                const parentPath = file.parent?.path || "";
+                let newName = file.name + " (copy)";
+                let newPath = parentPath ? normalizePath(`${parentPath}/${newName}`) : newName;
+                let counter = 1;
+                while (app.vault.getAbstractFileByPath(newPath)) {
+                  newName = file.name + ` (copy ${counter})`;
+                  newPath = parentPath ? normalizePath(`${parentPath}/${newName}`) : newName;
+                  counter++;
                 }
-                settings = { ...settings, orderMap };
-                await onUpdateSettings(settings);
-              } catch (e) {
-                console.error("Duplicate folder error:", e);
+                try {
+                  await duplicateFolderRecursive(file, newPath);
+                  const srcPrefix = file.path + "/";
+                  const orderMap = { ...settings.orderMap };
+                  for (const [key, val] of Object.entries(settings.orderMap)) {
+                    if (key === file.path) {
+                      orderMap[newPath] = [...val];
+                    } else if (key.startsWith(srcPrefix)) {
+                      orderMap[newPath + key.slice(srcPrefix.length - 1)] = [...val];
+                    }
+                  }
+                  settings = { ...settings, orderMap };
+                  await onUpdateSettings(settings);
+                } catch (e) {
+                  console.error("Duplicate folder error:", e);
+                }
               }
-            }
-          })
-      );
-      menu.addSeparator();
-      menu.addItem((item) =>
-        item
-          .setTitle("Rename")
-          .setIcon("pencil")
-          .onClick(handleRename)
-      );
-      menu.addItem((item) =>
-        item
-          .setTitle("Delete")
-          .setIcon("trash-2")
-          .setWarning(true)
-          .onClick(async () => {
-            if (settings.confirmDelete) {
-              const title = "Delete";
-              const desc = targetPaths.length > 1
-                ? `Are you sure you want to delete these ${targetPaths.length} items?`
-                : `Are you sure you want to delete "${file.name}"?`;
-              const confirmed = await showConfirmModal(app, title, desc);
-              if (!confirmed) return;
-            }
-            for (const p of targetPaths) {
-              const f = app.vault.getAbstractFileByPath(p);
-              if (f) await deleteFile(app, f);
-            }
-          })
-      );
-      menu.addSeparator();
-    } else if (!isFolder) {
-      menu.addItem((item) =>
-        item
-          .setTitle("Duplicate")
-          .setIcon("copy")
-          .onClick(async () => {
-            if (file instanceof TFile) {
-              try {
-                await duplicateFile(file);
-              } catch (e) {
-                console.error("Duplicate file error:", e);
+            })
+        );
+        menu.addSeparator();
+        menu.addItem((item) =>
+          item
+            .setTitle("Rename")
+            .setIcon("pencil")
+            .onClick(handleRename)
+        );
+        menu.addItem((item) =>
+          item
+            .setTitle("Delete")
+            .setIcon("trash-2")
+            .setWarning(true)
+            .onClick(async () => {
+              if (settings.confirmDelete) {
+                const title = "Delete";
+                const desc = targetPaths.length > 1
+                  ? `Are you sure you want to delete these ${targetPaths.length} items?`
+                  : `Are you sure you want to delete "${file.name}"?`;
+                const confirmed = await showConfirmModal(app, title, desc);
+                if (!confirmed) return;
               }
-            }
-          })
-      );
-      menu.addSeparator();
-      menu.addItem((item) =>
-        item
-          .setTitle("Rename")
-          .setIcon("pencil")
-          .onClick(handleRename)
-      );
-      menu.addItem((item) =>
-        item
-          .setTitle("Delete")
-          .setIcon("trash-2")
-          .setWarning(true)
-          .onClick(async () => {
-            if (settings.confirmDelete) {
-              const title = "Delete";
-              const desc = targetPaths.length > 1
-                ? `Are you sure you want to delete these ${targetPaths.length} items?`
-                : `Are you sure you want to delete "${file.name}"?`;
-              const confirmed = await showConfirmModal(app, title, desc);
-              if (!confirmed) return;
-            }
-            for (const p of targetPaths) {
-              const f = app.vault.getAbstractFileByPath(p);
-              if (f) await deleteFile(app, f);
-            }
-          })
-      );
-      menu.addSeparator();
-    }
+              for (const p of targetPaths) {
+                const f = app.vault.getAbstractFileByPath(p);
+                if (f) await deleteFile(app, f);
+              }
+            })
+        );
+        menu.addSeparator();
+      } else if (!isFolder) {
+        menu.addItem((item) =>
+          item
+            .setTitle("Duplicate")
+            .setIcon("copy")
+            .onClick(async () => {
+              if (file instanceof TFile) {
+                try {
+                  await duplicateFile(file);
+                } catch (e) {
+                  console.error("Duplicate file error:", e);
+                }
+              }
+            })
+        );
+        menu.addSeparator();
+        menu.addItem((item) =>
+          item
+            .setTitle("Rename")
+            .setIcon("pencil")
+            .onClick(handleRename)
+        );
+        menu.addItem((item) =>
+          item
+            .setTitle("Delete")
+            .setIcon("trash-2")
+            .setWarning(true)
+            .onClick(async () => {
+              if (settings.confirmDelete) {
+                const title = "Delete";
+                const desc = targetPaths.length > 1
+                  ? `Are you sure you want to delete these ${targetPaths.length} items?`
+                  : `Are you sure you want to delete "${file.name}"?`;
+                const confirmed = await showConfirmModal(app, title, desc);
+                if (!confirmed) return;
+              }
+              for (const p of targetPaths) {
+                const f = app.vault.getAbstractFileByPath(p);
+                if (f) await deleteFile(app, f);
+              }
+            })
+        );
+        menu.addSeparator();
+      }
 
-    const singleHidden = !isMultiSelected && settings.hiddenPaths.includes(file.path);
-    menu.addItem((item) =>
-      item
-        .setTitle("Move to...")
-        .setIcon("corner-up-right")
-        .onClick(handleMoveTo)
-    );
-    menu.addSeparator();
-    menu.addItem((item) =>
-      item
-        .setTitle(isMultiSelected ? "Toggle hide" : singleHidden ? "Unhide" : "Hide")
-        .setIcon(isMultiSelected ? "eye" : singleHidden ? "eye" : "eye-off")
-        .onClick(async () => {
-          const next = { ...settings };
-          for (const p of targetPaths) {
-            if (next.hiddenPaths.includes(p)) {
-              next.hiddenPaths = next.hiddenPaths.filter((hp) => hp !== p);
-            } else {
-              next.hiddenPaths = [...next.hiddenPaths, p];
-            }
-          }
-          settings = next;
-          await onUpdateSettings(settings);
-        })
-    );
-
-    const singleArchived = !isMultiSelected && isFolder && settings.archivedPaths.includes(file.path);
-    if (isFolder) {
-      const isArchivedFolder = settings.archivedPaths.includes(file.path);
-      menu.addItem((item) =>
+    } else {
+      const actions = new Set(profile.actions);
+      const singleHidden = !isMultiSelected && settings.hiddenPaths.includes(file.path);
+      if (actions.has("move")) menu.addItem((item) =>
         item
-          .setTitle(isArchivedFolder ? "Unarchive folder" : "Archive folder")
-          .setIcon(isArchivedFolder ? "folder" : "archive")
+          .setTitle("Move to...")
+          .setIcon("corner-up-right")
+          .onClick(handleMoveTo)
+      );
+      if (actions.has("hide")) menu.addItem((item) =>
+        item
+          .setTitle(isMultiSelected ? "Toggle hide" : singleHidden ? "Unhide" : "Hide")
+          .setIcon(isMultiSelected ? "eye" : singleHidden ? "eye" : "eye-off")
           .onClick(async () => {
             const next = { ...settings };
-            if (isArchivedFolder) {
-              next.archivedPaths = next.archivedPaths.filter((p) => p !== file.path);
-            } else {
-              next.archivedPaths = [...next.archivedPaths, file.path];
-              // Clear orderMap for this folder – archived uses alphabetical sort
-              const om = { ...next.orderMap };
-              delete om[file.path];
-              next.orderMap = om;
-            }
-            settings = next;
-            await onUpdateSettings(settings);
-          })
-      );
-    }
-
-    const ctxX = event.clientX;
-    const ctxY = event.clientY;
-
-    menu.addSeparator();
-
-    menu.addItem((item) => {
-      item.setTitle("Change color...").setIcon("palette");
-      const submenu = item.setSubmenu();
-      for (const c of COLOR_PRESETS) {
-        submenu.addItem((sub) =>
-          sub
-            .setTitle(c.label)
-            .onClick(async () => {
-              const next = { ...settings };
-              if (c.value) {
-                next.colorMap = { ...next.colorMap, [file.path]: c.value };
+            for (const p of targetPaths) {
+              if (next.hiddenPaths.includes(p)) {
+                next.hiddenPaths = next.hiddenPaths.filter((hp) => hp !== p);
               } else {
-                const cm = { ...next.colorMap };
-                delete cm[file.path];
-                next.colorMap = cm;
+                next.hiddenPaths = [...next.hiddenPaths, p];
+              }
+            }
+            settings = next;
+            await onUpdateSettings(settings);
+          })
+      );
+
+      if (isFolder && actions.has("archive")) {
+        const isArchivedFolder = settings.archivedPaths.includes(file.path);
+        menu.addItem((item) =>
+          item
+            .setTitle(isArchivedFolder ? "Unarchive folder" : "Archive folder")
+            .setIcon(isArchivedFolder ? "folder" : "archive")
+            .onClick(async () => {
+              const next = { ...settings };
+              if (isArchivedFolder) {
+                next.archivedPaths = next.archivedPaths.filter((p) => p !== file.path);
+              } else {
+                next.archivedPaths = [...next.archivedPaths, file.path];
+                // Clear orderMap for this folder – archived uses alphabetical sort
+                const om = { ...next.orderMap };
+                delete om[file.path];
+                next.orderMap = om;
               }
               settings = next;
               await onUpdateSettings(settings);
             })
         );
       }
-      if (settings.customColors.length > 0) {
-        submenu.addSeparator();
-        submenu.addItem((sub) => {
-          sub.setTitle("More colors...").setIcon("palette");
-          const subsub = sub.setSubmenu();
-          for (const color of settings.customColors) {
-            subsub.addItem((s) => {
-              const frag = document.createDocumentFragment();
-              const circle = document.createElement("span");
-              circle.style.display = "inline-block";
-              circle.style.width = "12px";
-              circle.style.height = "12px";
-              circle.style.borderRadius = "50%";
-              circle.style.backgroundColor = color;
-              circle.style.marginRight = "8px";
-              circle.style.verticalAlign = "middle";
-              circle.style.border = "1px solid var(--background-modifier-border)";
-              frag.appendChild(circle);
-              frag.appendChild(document.createTextNode(color));
-              s.setTitle(frag);
-              s.onClick(async () => {
-                const next = { ...settings };
-                next.colorMap = { ...next.colorMap, [file.path]: color };
-                settings = next;
-                await onUpdateSettings(settings);
-              });
-            });
-          }
-        });
-      }
-    });
 
-    menu.addItem((item) => {
-      item.setTitle("Change icon...").setIcon("image");
-      const submenu = item.setSubmenu();
-      for (const icon of ICON_OPTIONS) {
-        submenu.addItem((sub) =>
-          sub
-            .setTitle(icon)
-            .setIcon(icon)
-            .onClick(async () => {
-              const next = { ...settings };
-              next.iconMap = { ...next.iconMap, [file.path]: icon };
-              settings = next;
-              await onUpdateSettings(settings);
-            })
-        );
-      }
-      submenu.addSeparator();
-      submenu.addItem((sub) =>
-        sub
-          .setTitle("Default (remove)")
-          .setIcon("x")
-          .onClick(async () => {
-            const next = { ...settings };
-            const im = { ...next.iconMap };
-            delete im[file.path];
-            next.iconMap = im;
-            settings = next;
-            await onUpdateSettings(settings);
-          })
-      );
-      submenu.addItem((sub) =>
-        sub
-          .setTitle("More icons...")
-          .setIcon("search")
-          .onClick(() => {
-            new IconSuggestModal(app, settings.customIconsFolder ?? "", async (iconName) => {
-              const next = { ...settings };
-              next.iconMap = { ...next.iconMap, [file.path]: iconName };
-              settings = next;
-              await onUpdateSettings(settings);
-            }).open();
-          })
-      );
-    });
-
-    if (isFolder) {
-      menu.addItem((item) => {
-        item.setTitle("Set collapse icons...").setIcon("chevrons-right");
+      if (actions.has("color")) menu.addItem((item) => {
+        item.setTitle("Change color...").setIcon("palette");
         const submenu = item.setSubmenu();
-
-        const currCollapsed = settings.folderCollapseIconMap[file.path]?.collapsed || settings.collapseIcon || "chevron-right";
-        const currExpanded = settings.folderCollapseIconMap[file.path]?.expanded || settings.collapseIconExpanded || "chevron-down";
-
-        submenu.addItem((sub) =>
-          sub
-            .setTitle(`Collapse icon: ${currCollapsed}`)
-            .setIcon(currCollapsed)
-            .onClick(() => {
-              new IconSuggestModal(app, settings.customIconsFolder ?? "", async (iconName) => {
+        for (const c of COLOR_PRESETS) {
+          submenu.addItem((sub) =>
+            sub
+              .setTitle(c.label)
+              .onClick(async () => {
                 const next = { ...settings };
-                const fcm = { ...next.folderCollapseIconMap };
-                const current: { collapsed: string; expanded: string } = fcm[file.path] || { collapsed: "", expanded: "" };
-                fcm[file.path] = { ...current, collapsed: iconName };
-                next.folderCollapseIconMap = fcm;
+                if (c.value) {
+                  next.colorMap = { ...next.colorMap, [file.path]: c.value };
+                } else {
+                  const cm = { ...next.colorMap };
+                  delete cm[file.path];
+                  next.colorMap = cm;
+                }
                 settings = next;
                 await onUpdateSettings(settings);
-              }).open();
-            })
-        );
+              })
+          );
+        }
+        if (settings.customColors.length > 0) {
+          submenu.addSeparator();
+          submenu.addItem((sub) => {
+            sub.setTitle("More colors...").setIcon("palette");
+            const subsub = sub.setSubmenu();
+            for (const color of settings.customColors) {
+              subsub.addItem((s) => {
+                const frag = document.createDocumentFragment();
+                const circle = document.createElement("span");
+                circle.style.display = "inline-block";
+                circle.style.width = "12px";
+                circle.style.height = "12px";
+                circle.style.borderRadius = "50%";
+                circle.style.backgroundColor = color;
+                circle.style.marginRight = "8px";
+                circle.style.verticalAlign = "middle";
+                circle.style.border = "1px solid var(--background-modifier-border)";
+                frag.appendChild(circle);
+                frag.appendChild(document.createTextNode(color));
+                s.setTitle(frag);
+                s.onClick(async () => {
+                  const next = { ...settings };
+                  next.colorMap = { ...next.colorMap, [file.path]: color };
+                  settings = next;
+                  await onUpdateSettings(settings);
+                });
+              });
+            }
+          });
+        }
+      });
 
-        submenu.addItem((sub) =>
-          sub
-            .setTitle(`Expand icon: ${currExpanded}`)
-            .setIcon(currExpanded)
-            .onClick(() => {
-              new IconSuggestModal(app, settings.customIconsFolder ?? "", async (iconName) => {
+      if (actions.has("icon")) menu.addItem((item) => {
+        item.setTitle("Change icon...").setIcon("image");
+        const submenu = item.setSubmenu();
+        for (const icon of ICON_OPTIONS) {
+          submenu.addItem((sub) =>
+            sub
+              .setTitle(icon)
+              .setIcon(icon)
+              .onClick(async () => {
                 const next = { ...settings };
-                const fcm = { ...next.folderCollapseIconMap };
-                const current: { collapsed: string; expanded: string } = fcm[file.path] || { collapsed: "", expanded: "" };
-                fcm[file.path] = { ...current, expanded: iconName };
-                next.folderCollapseIconMap = fcm;
+                next.iconMap = { ...next.iconMap, [file.path]: icon };
                 settings = next;
                 await onUpdateSettings(settings);
-              }).open();
-            })
-        );
-
+              })
+          );
+        }
         submenu.addSeparator();
         submenu.addItem((sub) =>
           sub
-            .setTitle("Reset chevron icons")
+            .setTitle("Default (remove)")
             .setIcon("x")
             .onClick(async () => {
               const next = { ...settings };
-              const fcm = { ...next.folderCollapseIconMap };
-              delete fcm[file.path];
-              next.folderCollapseIconMap = fcm;
+              const im = { ...next.iconMap };
+              delete im[file.path];
+              next.iconMap = im;
               settings = next;
               await onUpdateSettings(settings);
             })
         );
+        submenu.addItem((sub) =>
+          sub
+            .setTitle("More icons...")
+            .setIcon("search")
+            .onClick(() => {
+              new IconSuggestModal(app, settings.customIconsFolder ?? "", async (iconName) => {
+                const next = { ...settings };
+                next.iconMap = { ...next.iconMap, [file.path]: iconName };
+                settings = next;
+                await onUpdateSettings(settings);
+              }).open();
+            })
+        );
       });
-    }
 
-    const submenuEntries = Object.entries(settings.submenus).filter(([, e]) => e.length > 0);
-    if (submenuEntries.length > 0) {
-      menu.addSeparator();
-      for (const [sectionName, entries] of submenuEntries) {
+      if (isFolder && actions.has("collapse-icons")) {
         menu.addItem((item) => {
-          item.setTitle(sectionName);
-          const icon = settings.submenuIcons?.[sectionName];
-          if (icon) item.setIcon(icon);
-          const sub = item.setSubmenu();
-          for (const cmd of entries) {
-            if (cmd.isSeparator) { sub.addSeparator(); continue; }
-            if (!cmd.commandId) continue;
-            sub.addItem((s) => {
-              s.setTitle(cmd.label);
-              if (cmd.icon) s.setIcon(cmd.icon);
-              s.onClick(() => {
-                const p = pluginInstance();
-                if (p) p.setLastClicked(file);
-                app.commands.executeCommandById(cmd.commandId);
-              });
-            });
-          }
+          item.setTitle("Set collapse icons...").setIcon("chevrons-right");
+          const submenu = item.setSubmenu();
+
+          const currCollapsed = settings.folderCollapseIconMap[file.path]?.collapsed || settings.collapseIcon || "chevron-right";
+          const currExpanded = settings.folderCollapseIconMap[file.path]?.expanded || settings.collapseIconExpanded || "chevron-down";
+
+          submenu.addItem((sub) =>
+            sub
+              .setTitle(`Collapse icon: ${currCollapsed}`)
+              .setIcon(currCollapsed)
+              .onClick(() => {
+                new IconSuggestModal(app, settings.customIconsFolder ?? "", async (iconName) => {
+                  const next = { ...settings };
+                  const fcm = { ...next.folderCollapseIconMap };
+                  const current: { collapsed: string; expanded: string } = fcm[file.path] || { collapsed: "", expanded: "" };
+                  fcm[file.path] = { ...current, collapsed: iconName };
+                  next.folderCollapseIconMap = fcm;
+                  settings = next;
+                  await onUpdateSettings(settings);
+                }).open();
+              })
+          );
+
+          submenu.addItem((sub) =>
+            sub
+              .setTitle(`Expand icon: ${currExpanded}`)
+              .setIcon(currExpanded)
+              .onClick(() => {
+                new IconSuggestModal(app, settings.customIconsFolder ?? "", async (iconName) => {
+                  const next = { ...settings };
+                  const fcm = { ...next.folderCollapseIconMap };
+                  const current: { collapsed: string; expanded: string } = fcm[file.path] || { collapsed: "", expanded: "" };
+                  fcm[file.path] = { ...current, expanded: iconName };
+                  next.folderCollapseIconMap = fcm;
+                  settings = next;
+                  await onUpdateSettings(settings);
+                }).open();
+              })
+          );
+
+          submenu.addSeparator();
+          submenu.addItem((sub) =>
+            sub
+              .setTitle("Reset chevron icons")
+              .setIcon("x")
+              .onClick(async () => {
+                const next = { ...settings };
+                const fcm = { ...next.folderCollapseIconMap };
+                delete fcm[file.path];
+                next.folderCollapseIconMap = fcm;
+                settings = next;
+                await onUpdateSettings(settings);
+              })
+          );
         });
       }
-      menu.addSeparator();
+
+      const commandCount = appendProfileCommands(menu, profile, app, file);
+      const applicableActions = profile.actions.filter(action => isFolder || (action !== "archive" && action !== "collapse-icons"));
+      if (applicableActions.length === 0 && commandCount === 0) {
+        menu.addItem(item => item.setTitle("No actions configured for this menu").setDisabled(true));
+      }
     }
 
-    if (settings.mainMenuCommands.length > 0) {
-      for (const cmd of settings.mainMenuCommands) {
-        if (cmd.isSeparator) { menu.addSeparator(); continue; }
-        if (!cmd.commandId) continue;
-        menu.addItem((s) => {
-          s.setTitle(cmd.label);
-          if (cmd.icon) s.setIcon(cmd.icon);
-          s.onClick(() => {
-            const p = pluginInstance();
-            if (p) p.setLastClicked(file);
-            app.commands.executeCommandById(cmd.commandId);
-          });
-        });
-      }
+    if (!profile && isFolder && settings.orderMap[file.path]?.length) {
+      menu.addSeparator();
+      menu.addItem(item => item.setTitle("Reset folder order").setIcon("rotate-ccw")
+        .onClick(() => { void onResetFolderOrder(file.path); }));
     }
 
     menu.showAtMouseEvent(event);
@@ -759,7 +741,7 @@ import { showConfirmModal } from "../confirm-modal";
 
   function handleDragOver(e: DragEvent) {
     e.stopPropagation();
-    updateAutoScroll(e.clientY);
+    if (!dragState.itemPath) return;
 
     // Ctrl held + cursor over a note -> link-insert mode: highlight the target
     // note instead of showing move indicators.
@@ -773,47 +755,25 @@ import { showConfirmModal } from "../confirm-modal";
         e.dataTransfer!.dropEffect = "copy";
         removeDropIndicator();
         highlightLinkTarget(noteEl);
+        updateAutoScroll(e.clientY);
         return;
       }
     }
 
     dragState.linkTarget = null;
     clearLinkTargetHighlight();
-    e.dataTransfer!.dropEffect = "move";
-    const target = resolveDropTarget(e.clientX, e.clientY);
-    if (!target) { clearFolderHighlight(); removeDropIndicator(); return; }
-
-    dragState.toPath = target.containerPath;
-    dragState.newIndex = target.newIndex;
-    dragState.targetFolder = target.targetFolder;
-
-    if (target.targetFolder && target.itemEl) {
-      clearFolderHighlight();
-      removeDropIndicator();
-      highlightFolder(target.itemEl);
-      return;
-    }
-
-    const ccEl = e.currentTarget as HTMLElement;
-    const containerFolder = ccEl.closest(".nav-folder") as HTMLElement | null;
-    if (containerFolder && ccEl.offsetHeight > 0) {
-      highlightFolder(containerFolder);
-    } else {
-      clearFolderHighlight();
-    }
-    if (target.itemEl) {
-      updateDropIndicator(target.itemEl, e.clientX, e.clientY);
-    } else {
-      removeDropIndicator();
-    }
+    const tree = (e.currentTarget as HTMLElement).closest(".simple-navigator-tree");
+    if (tree) updateMoveDrop(e, tree, settings.sortMode !== "manual", onExpandDropFolder);
   }
 
   function findNoteUnderPointer(x: number, y: number): HTMLElement | null {
     const el = document.elementFromPoint(x, y);
-    return el ? el.closest(".nav-file") : null;
+    const item = el ? el.closest<HTMLElement>(".nav-file") : null;
+    const target = item?.dataset.path ? app.vault.getAbstractFileByPath(item.dataset.path) : null;
+    return target instanceof TFile && target.extension.toLowerCase() === "md" ? item : null;
   }
 
-  function handleDrop(e: DragEvent) {
+  async function handleDrop(e: DragEvent) {
     dragState.lastDropTime = Date.now();
     e.stopPropagation();
     destroyDropIndicator();
@@ -841,22 +801,29 @@ import { showConfirmModal } from "../confirm-modal";
     const oldIndex = dragState.oldIndex;
     const batchPaths = dragState.batchPaths.length > 0 ? dragState.batchPaths : undefined;
 
-    if (dragState.targetFolder) {
-      onSortEnd({ fromPath, toPath: dragState.targetFolder, oldIndex, newIndex: -1, itemPath, batchPaths });
-    } else if (dragState.toPath !== "" || dragState.newIndex >= 0) {
-      onSortEnd({ fromPath, toPath: dragState.toPath, oldIndex, newIndex: dragState.newIndex, itemPath, batchPaths });
-    }
-
+    // Capture the target before clearing the shared drag state.
+    const toPath = dragState.targetFolder ?? dragState.toPath;
+    const newIndex = dragState.targetFolder ? -1 : dragState.newIndex;
+    const hasTarget = !!dragState.targetFolder || dragState.toPath !== "" || dragState.newIndex >= 0;
     dragState.itemPath = "";
     dragState.fromPath = "";
     dragState.batchPaths = [];
+    document.body.classList.remove("sn-is-dragging");
+    try {
+      if (hasTarget) {
+        await onSortEnd({ fromPath, toPath, oldIndex, newIndex, itemPath, batchPaths });
+      }
+    } catch (error) {
+      console.error("Drop failed:", error);
+      new Notice("Could not save the navigator order");
+    }
   }
 
   function handleDragLeave(e: DragEvent) {
     const target = e.currentTarget as HTMLElement;
     const related = e.relatedTarget as HTMLElement | null;
     if (related && target.contains(related)) return;
-    clearFolderHighlight();
+    removeDropIndicator();
     clearLinkTargetHighlight();
     dragState.linkTarget = null;
   }
@@ -865,13 +832,14 @@ import { showConfirmModal } from "../confirm-modal";
     destroyDropIndicator();
     clearLinkTargetHighlight();
     dragState.linkTarget = null;
+    dragState.itemPath = "";
     document.body.classList.remove("sn-is-dragging");
     dragState.batchPaths = [];
   }
 </script>
 
   {#if isFolder}
-  <div class="nav-folder" data-path={file.path} class:is-collapsed={collapsed} class:is-hidden={isHidden} class:is-selected={selectedPaths.has(file.path)}>
+  <div class="nav-folder" data-path={file.path} role="treeitem" tabindex="-1" aria-label={file.name} aria-expanded={!collapsed} aria-selected={selectedPaths.has(file.path)} class:is-collapsed={collapsed} class:is-hidden={isHidden} class:is-selected={selectedPaths.has(file.path)}>
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <div
       class="nav-folder-title"
@@ -881,6 +849,8 @@ import { showConfirmModal } from "../confirm-modal";
       on:mousedown={handleMiddleMouseDown}
       on:dblclick={handleDblClick}
       on:contextmenu={handleContextMenu}
+      on:sn-contextmenu={(event) => handleContextMenu(event.detail)}
+      on:sn-rename={handleRename}
       on:dragstart={handleDragStart}
       on:dragend={handleDragEnd}
       style="padding-left: {4 + depth * 20}px;display:flex;align-items:center"
@@ -894,12 +864,12 @@ import { showConfirmModal } from "../confirm-modal";
       <span class="nav-file-icon" bind:this={typeIconEl} style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;margin:0;padding:0;color:{iconColor}" />
       {/if}
       {#if editingPath === file.path}
-      <input class="sn-rename-input" type="text" value={renameValue} bind:this={renameInputEl} on:blur={saveRename} on:keydown={handleRenameKeydown} />
+      <input class="sn-rename-input" type="text" value={renameValue} bind:this={renameInputEl} on:blur={() => saveRename()} on:keydown={handleRenameKeydown} />
       {:else}
       <div class="nav-folder-title-content">{isArchived ? `${displayName} (${fileCount})` : file.name}</div>
       {/if}
     </div>
-    <div class="nav-folder-children" data-folder-path={file.path} style:display={collapsed ? 'none' : ''} style:visibility={collapsed ? 'hidden' : ''} style:overflow={collapsed ? 'hidden' : ''} style:--sn-color={settings.colorMap[file.path] || undefined} style:--guide-offset={4 + depth * 20 + 8 + "px"} style:--guide-width={1 / window.devicePixelRatio + "px"} on:dragover|preventDefault={handleDragOver} on:drop={handleDrop} on:dragleave={handleDragLeave}>
+    <div class="nav-folder-children" role="group" data-folder-path={file.path} style:display={collapsed ? 'none' : ''} style:visibility={collapsed ? 'hidden' : ''} style:overflow={collapsed ? 'hidden' : ''} style:--sn-color={settings.colorMap[file.path] || undefined} style:--guide-offset={4 + depth * 20 + 8 + "px"} style:--guide-width={1 / window.devicePixelRatio + "px"} on:dragover|preventDefault={handleDragOver} on:drop={handleDrop} on:dragleave={handleDragLeave}>
       {#if !collapsed}
       {#each children as child (child.path)}
         <svelte:self
@@ -913,15 +883,18 @@ import { showConfirmModal } from "../confirm-modal";
           {selectedPaths}
           {onSelect}
           {onClearSelection}
+          {onExpandDropFolder}
+          {onResetFolderOrder}
           {onSortEnd}
           {onUpdateSettings}
+          {renameItem}
         />
       {/each}
       {/if}
     </div>
   </div>
 {:else}
-  <div class="nav-file" data-path={file.path} class:is-active={isActive} class:is-hidden={isHidden} class:is-selected={selectedPaths.has(file.path)}>
+  <div class="nav-file" data-path={file.path} role="treeitem" tabindex="-1" aria-label={file.name} aria-current={isActive ? "page" : undefined} aria-selected={selectedPaths.has(file.path)} class:is-active={isActive} class:is-hidden={isHidden} class:is-selected={selectedPaths.has(file.path)}>
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <div
       class="nav-file-title"
@@ -931,6 +904,8 @@ import { showConfirmModal } from "../confirm-modal";
       on:mousedown={handleMiddleMouseDown}
       on:dblclick={handleDblClick}
       on:contextmenu={handleContextMenu}
+      on:sn-contextmenu={(event) => handleContextMenu(event.detail)}
+      on:sn-rename={handleRename}
       on:dragstart={handleDragStart}
       on:dragend={handleDragEnd}
       style="padding-left: {4 + depth * 20}px;display:flex;align-items:center"
@@ -941,7 +916,7 @@ import { showConfirmModal } from "../confirm-modal";
       <span class="nav-file-icon" bind:this={typeIconEl} style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;margin:0;padding:0;color:{iconColor}" />
       {/if}
       {#if editingPath === file.path}
-      <input class="sn-rename-input" type="text" value={renameValue} bind:this={renameInputEl} on:blur={saveRename} on:keydown={handleRenameKeydown} />
+      <input class="sn-rename-input" type="text" value={renameValue} bind:this={renameInputEl} on:blur={() => saveRename()} on:keydown={handleRenameKeydown} />
       {:else}
       <div class="nav-file-title-content">{displayName}</div>
       {/if}

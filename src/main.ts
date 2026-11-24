@@ -2,18 +2,23 @@ import { Plugin, WorkspaceLeaf, TFolder, TAbstractFile, Notice, normalizePath } 
 import { SIMPLE_NAVIGATOR_VIEW, SimpleNavigatorView } from "./SimpleNavigatorView";
 import { PluginSettings, DEFAULT_SETTINGS, SimpleNavigatorSettingTab } from "./settings";
 import { refreshCustomIcons } from "./icon-utils";
-import { cleanUpSettings } from "./utils";
+import { cleanUpSettings, getFolderPaths } from "./utils";
 import { MoveToModal } from "./modal";
 import { updatePathsOnMove } from "./drag-state";
+import { migrateMenuProfiles, ensureAltNavigatorMenu } from "./menu-profiles";
 
 export default class SimpleNavigatorPlugin extends Plugin {
   settings!: PluginSettings;
   lastClicked: TAbstractFile | null = null;
   lastClickedAt = 0;
+  private settingsSaveQueue: Promise<void> = Promise.resolve();
 
   async onload() {
     const rawData = await this.loadData() as Record<string, unknown> | null;
     this.settings = Object.assign({}, DEFAULT_SETTINGS, rawData);
+    if (this.settings.sortMode !== "name-asc" && this.settings.sortMode !== "name-desc") {
+      this.settings.sortMode = "manual";
+    }
 
     // Migrate old customCommands → submenus["Other"]
     if (rawData?.customCommands && Array.isArray(rawData.customCommands) && rawData.customCommands.length > 0) {
@@ -25,7 +30,18 @@ export default class SimpleNavigatorPlugin extends Plugin {
     delete (this.settings as any).customCommands;
     delete (this.settings as any).customTemplates;
 
+    migrateMenuProfiles(this.settings, Array.isArray(rawData?.menuProfiles));
+    const menusUpdated = ensureAltNavigatorMenu(this.settings);
+
     this.settings = cleanUpSettings(this.settings, this.app.vault);
+
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      this.settings = updatePathsOnMove(this.settings, oldPath, file.path);
+      void this.saveSettings().catch((error) => {
+        console.error("Could not save navigator settings after rename:", error);
+        new Notice("File moved, but navigator settings could not be saved");
+      });
+    }));
 
     refreshCustomIcons(this.app, this.settings.customIconsFolder);
 
@@ -54,11 +70,7 @@ export default class SimpleNavigatorPlugin extends Plugin {
       id: "collapse-all",
       name: "Collapse all folders",
       callback: async () => {
-        const allPaths = this.app.vault
-          .getAllLoadedFiles()
-          .filter((f): f is TFolder => f instanceof TFolder)
-          .map((f) => f.path);
-        this.settings = { ...this.settings, collapsedPaths: allPaths };
+        this.settings = { ...this.settings, collapsedPaths: getFolderPaths(this.app.vault) };
         await this.saveSettings();
       },
     });
@@ -73,6 +85,22 @@ export default class SimpleNavigatorPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "reveal-active-file",
+      name: "Reveal active file in navigator",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file) return false;
+        if (!checking) {
+          void this.activateView(false).then(view => view.revealFile(file)).catch(error => {
+            console.error("Could not reveal active file:", error);
+            new Notice("Could not reveal the active file");
+          });
+        }
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: "move-to",
       name: "Move to...",
       callback: () => this.showMoveToDialog(),
@@ -83,6 +111,7 @@ export default class SimpleNavigatorPlugin extends Plugin {
     });
 
     this.addSettingTab(new SimpleNavigatorSettingTab(this.app, this));
+    if (menusUpdated) await this.saveSettings();
   }
 
   async onunload() {
@@ -128,17 +157,20 @@ export default class SimpleNavigatorPlugin extends Plugin {
       : item.name;
     if (targetPath === item.path) return;
 
-    const savedSettings = this.settings;
     try {
-      this.settings = updatePathsOnMove(this.settings, item.path, targetPath);
-      await this.app.fileManager.renameFile(item, targetPath);
+      await this.renameItem(item, targetPath);
     } catch (e) {
       console.error("Move failed:", e);
-      this.settings = savedSettings;
-      new Notice(`Cannot move "${item.name}": file is locked`);
+      new Notice(`Cannot move "${item.name}": ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
-    await this.saveSettings();
+  }
+
+  async renameItem(item: TAbstractFile, targetPath: string): Promise<void> {
+    if (item.path === targetPath) return;
+    await this.app.fileManager.renameFile(item, targetPath);
+    // The vault rename listener synchronously migrates settings for all callers.
+    await this.settingsSaveQueue;
   }
 
   async moveOrderKey(oldPath: string, newPath: string): Promise<void> {
@@ -209,20 +241,21 @@ export default class SimpleNavigatorPlugin extends Plugin {
   }
 
   async saveSettings() {
-    await this.saveData(this.settings);
     // propagate settings to the view so Svelte re-renders
-    const view = this.app.workspace
-      .getLeavesOfType(SIMPLE_NAVIGATOR_VIEW)[0]
-      ?.view as SimpleNavigatorView | undefined;
-    if (view) {
+    for (const leaf of this.app.workspace.getLeavesOfType(SIMPLE_NAVIGATOR_VIEW)) {
+      const view = leaf.view as SimpleNavigatorView;
       view.component?.$set({
         settings: this.settings,
         showHidden: this.settings.showHidden,
       });
     }
+    const snapshot = JSON.parse(JSON.stringify(this.settings)) as PluginSettings;
+    const save = this.settingsSaveQueue.catch(() => {}).then(() => this.saveData(snapshot));
+    this.settingsSaveQueue = save;
+    await save;
   }
 
-  async activateView() {
+  async activateView(active = true): Promise<SimpleNavigatorView> {
     const { workspace } = this.app;
 
     let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(SIMPLE_NAVIGATOR_VIEW)[0];
@@ -233,10 +266,11 @@ export default class SimpleNavigatorPlugin extends Plugin {
       }
       await leaf.setViewState({
         type: SIMPLE_NAVIGATOR_VIEW,
-        active: true,
+        active,
       });
     }
 
-    workspace.revealLeaf(leaf);
+    await workspace.revealLeaf(leaf);
+    return leaf.view as SimpleNavigatorView;
   }
 }
