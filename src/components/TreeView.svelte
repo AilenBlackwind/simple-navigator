@@ -29,7 +29,7 @@
   let activeFilePath = "";
   let activeFileRef: EventRef;
   let selectedPaths = new Set<string>();
-  let lastClickedPath: string | null = null;
+  let selectionAnchorPath: string | null = null;
 
   function rowForPath(path: string) {
     return treeEl?.querySelector<HTMLElement>(`[role="treeitem"][data-path="${CSS.escape(path)}"]`);
@@ -40,44 +40,38 @@
     if (scroll) row.firstElementChild?.scrollIntoView({ block: "nearest" });
   }
 
-  function handleSelect(path: string, shiftKey: boolean, ctrlKey: boolean) {
+  function handleSelect(path: string, range: boolean, toggle: boolean, fallbackAnchor?: string) {
     const row = rowForPath(path);
-    if (row) focusRow(row, false);
-    if (shiftKey && lastClickedPath) {
-      const container = treeEl;
-      if (container) {
-        const allItems = container.querySelectorAll<HTMLElement>(
-          ".nav-folder[data-path], .nav-file[data-path]"
-        );
-        const paths = Array.from(allItems)
-          .map((el) => el.dataset.path || "")
-          .filter(Boolean);
-        const lastIdx = paths.indexOf(lastClickedPath);
-        const curIdx = paths.indexOf(path);
-        if (lastIdx !== -1 && curIdx !== -1) {
-          const start = Math.min(lastIdx, curIdx);
-          const end = Math.max(lastIdx, curIdx);
-          selectedPaths = new Set(paths.slice(start, end + 1));
-        } else {
-          selectedPaths = new Set([path]);
-        }
-      } else {
+    if (!row) return;
+    focusRow(row, range);
+    const isFile = row.classList.contains("nav-file");
+    if (range) {
+      if (!isFile) return;
+      const paths = Array.from(treeEl.querySelectorAll<HTMLElement>(".nav-file[data-path]"), item => item.dataset.path!);
+      const anchor = selectionAnchorPath ?? fallbackAnchor;
+      const targetIndex = paths.indexOf(path);
+      if (targetIndex < 0) return;
+      const anchorIndex = anchor ? paths.indexOf(anchor) : -1;
+      if (anchorIndex < 0) {
+        selectionAnchorPath = path;
         selectedPaths = new Set([path]);
+        return;
       }
-    } else if (ctrlKey) {
-      if (selectedPaths.has(path)) {
-        selectedPaths.delete(path);
-      } else {
-        selectedPaths.add(path);
-      }
-      selectedPaths = new Set(selectedPaths);
+      selectionAnchorPath = paths[anchorIndex];
+      selectedPaths = new Set(paths.slice(Math.min(anchorIndex, targetIndex), Math.max(anchorIndex, targetIndex) + 1));
     } else {
-      lastClickedPath = path;
+      selectionAnchorPath = isFile ? path : null;
+      if (toggle) {
+        const next = new Set(selectedPaths);
+        if (!next.delete(path)) next.add(path);
+        selectedPaths = next;
+      }
     }
   }
 
   function clearSelection() {
     selectedPaths = new Set();
+    selectionAnchorPath = null;
   }
 
   function handleTreeKeydown(event: KeyboardEvent) {
@@ -100,8 +94,14 @@
     const index = rows.indexOf(target);
     const path = target.dataset.path;
     const title = path ? target.firstElementChild as HTMLElement : null;
+    const extend = event.shiftKey && (key === "ArrowDown" || key === "ArrowUp");
     let next: HTMLElement | undefined;
-    if (key === "ArrowDown") next = rows[Math.min(index + 1, rows.length - 1)];
+    if (extend) {
+      const step = key === "ArrowDown" ? 1 : -1;
+      for (let i = index < 0 && step < 0 ? rows.length - 1 : index + step; i >= 0 && i < rows.length; i += step) {
+        if (rows[i].classList.contains("nav-file")) { next = rows[i]; break; }
+      }
+    } else if (key === "ArrowDown") next = rows[Math.min(index + 1, rows.length - 1)];
     else if (key === "ArrowUp") next = rows[index < 0 ? rows.length - 1 : Math.max(0, index - 1)];
     else if (key === "Home") next = rows[0];
     else if (key === "End") next = rows[rows.length - 1];
@@ -113,7 +113,6 @@
       else next = target.parentElement?.closest<HTMLElement>('[role="treeitem"]') ?? undefined;
     } else if (path && title && key === "F2") title.dispatchEvent(new Event("sn-rename"));
     else if (path && toggleSelection) {
-      lastClickedPath = path;
       handleSelect(path, false, true);
     } else if (title && (key === "Enter" || key === " ")) title.click();
     else if (title && contextMenu) {
@@ -123,12 +122,10 @@
 
     event.preventDefault();
     event.stopPropagation();
-    if (next && event.shiftKey && (key === "ArrowDown" || key === "ArrowUp") && path && next.dataset.path) {
-      lastClickedPath ??= path;
-      handleSelect(next.dataset.path, true, false);
-      focusRow(next);
+    if (next && extend && next.dataset.path) {
+      handleSelect(next.dataset.path, true, false, path);
     } else if (next) {
-      lastClickedPath = next.dataset.path ?? null;
+      selectionAnchorPath = next.classList.contains("nav-file") ? next.dataset.path ?? null : null;
       focusRow(next);
     }
   }
@@ -162,9 +159,7 @@
     dragState.lastDropTime = Date.now();
     destroyDropIndicator();
 
-    const fromPath = dragState.fromPath;
     const itemPath = dragState.itemPath;
-    const oldIndex = dragState.oldIndex;
     const batchPaths = dragState.batchPaths.length > 0 ? dragState.batchPaths : undefined;
     const targetFolder = dragState.targetFolder;
     const toPath = dragState.toPath;
@@ -173,9 +168,9 @@
 
     try {
       if (targetFolder) {
-        await handleSortEnd({ fromPath, toPath: targetFolder, oldIndex, newIndex: -1, itemPath, batchPaths });
+        await handleSortEnd({ toPath: targetFolder, newIndex: -1, itemPath, batchPaths });
       } else if (toPath !== "" || newIndex >= 0) {
-        await handleSortEnd({ fromPath, toPath, oldIndex, newIndex, itemPath, batchPaths });
+        await handleSortEnd({ toPath, newIndex, itemPath, batchPaths });
       }
     } catch (err) {
       console.error("ROOT DROP ERROR", err);
@@ -336,7 +331,6 @@
     destroyDropIndicator();
     clearLinkTargetHighlight();
     dragState.itemPath = "";
-    dragState.fromPath = "";
     dragState.batchPaths = [];
     dragState.targetFolder = null;
     dragState.toPath = "";
@@ -366,107 +360,65 @@
   }
 
   async function handleSortEnd(detail: {
-    fromPath: string;
     toPath: string;
-    oldIndex: number;
     newIndex: number;
     itemPath: string;
     batchPaths?: string[];
   }) {
     const items = detail.batchPaths && detail.batchPaths.length > 0 ? detail.batchPaths : [detail.itemPath];
-    const alphabetical = getSettings().sortMode === "name-asc" || getSettings().sortMode === "name-desc";
-    if (!alphabetical && detail.fromPath === detail.toPath && detail.newIndex >= 0) {
-      // Archived folders use alphabetical sort — skip orderMap
-      if (detail.fromPath && settings.archivedPaths.includes(detail.fromPath)) return;
+    const { toPath, newIndex } = detail;
+    const targetFolder = toPath ? app.vault.getAbstractFileByPath(toPath) : rootFolder;
+    if (!(targetFolder instanceof TFolder)) return;
+    const before = getSettings();
+    const manual = before.sortMode !== "name-asc" && before.sortMode !== "name-desc" && !before.archivedPaths.includes(toPath);
+    const insert = manual && newIndex >= 0;
+    const dragged = new Set(items);
+    const visibleTargets = insert ? sortWithOrder(targetFolder.children, before.orderMap, toPath)
+      .filter(child => showHidden || !before.hiddenPaths.includes(child.path)) : [];
+    // The marker is a boundary in the visible list. Find the first row after
+    // it that will stay in place, even if the adjacent row is also selected.
+    const anchorName = visibleTargets.slice(newIndex).find(child => !dragged.has(child.path))?.name;
+    const placedNames: string[] = [];
+    const failed: string[] = [];
+    let moved = false;
 
-      const container = document.querySelector(
-        `.simple-navigator-tree [data-folder-path="${detail.fromPath}"]`
-      ) as HTMLElement | null;
-      if (!container) {
-        console.warn("Container not found for", detail.fromPath);
-        return;
+    for (const itemPath of items) {
+      const file = app.vault.getAbstractFileByPath(itemPath);
+      if (!file) continue;
+      if (file instanceof TFolder && (targetFolder.path === itemPath || targetFolder.path.startsWith(itemPath + "/"))) {
+        failed.push(file.name);
+        continue;
       }
-
-      const itemNames = items.map(p => p.split("/").pop() || p);
-
-      let orderedNames: string[] = [];
-      for (let i = 0; i < container.children.length; i++) {
-        const child = container.children[i] as HTMLElement;
-        const path = child.dataset.path;
-        if (path) {
-          const name = path.split("/").pop();
-          if (name) orderedNames.push(name);
-        }
+      const targetPath = normalizePath(toPath ? `${toPath}/${file.name}` : file.name);
+      if (targetPath === file.path) {
+        if (insert) placedNames.push(file.name);
+        continue;
       }
-
-      if (items.length === 1) {
-        const itemName = itemNames[0];
-        let adjustedNewIndex = detail.newIndex;
-        if (adjustedNewIndex > detail.oldIndex) adjustedNewIndex--;
-        const idx = orderedNames.indexOf(itemName);
-        if (idx >= 0) {
-          orderedNames.splice(idx, 1);
-          orderedNames.splice(adjustedNewIndex, 0, itemName);
-        }
-      } else {
-        const preRemoveIndices = itemNames.map(name => orderedNames.indexOf(name)).filter(idx => idx >= 0);
-        const sortedDesc = [...preRemoveIndices].sort((a, b) => b - a);
-        for (const idx of sortedDesc) orderedNames.splice(idx, 1);
-        const numBeforeNew = preRemoveIndices.filter(idx => idx < detail.newIndex).length;
-        const adjustedNewIndex = Math.max(0, detail.newIndex - numBeforeNew);
-        const safeIndex = Math.min(adjustedNewIndex, orderedNames.length);
-        orderedNames.splice(safeIndex, 0, ...itemNames);
+      try {
+        await renameItem(file, targetPath);
+        placedNames.push(file.name);
+        moved = true;
+      } catch (error) {
+        console.error("Failed to move " + itemPath, error);
+        failed.push(file.name);
       }
+    }
 
-      settings = {
-        ...settings,
-        orderMap: {
-          ...settings.orderMap,
-          [detail.fromPath]: orderedNames,
-        },
-      };
-      await onUpdateSettings(settings);
-    } else {
-      const targetFolder = detail.toPath
-        ? app.vault.getAbstractFileByPath(detail.toPath) : rootFolder;
-      if (!(targetFolder instanceof TFolder)) return;
-      const before = getSettings();
-      const targetChildren = sortWithOrder([...targetFolder.children], before.orderMap, detail.toPath);
-      const visibleTargets = targetChildren.filter(child => showHidden || !before.hiddenPaths.includes(child.path));
-      const anchorName = !alphabetical && detail.newIndex >= 0 ? visibleTargets[detail.newIndex]?.name : undefined;
-      const movedNames: string[] = [];
-      const failed: string[] = [];
-      for (const itemPath of items) {
-        const file = app.vault.getAbstractFileByPath(itemPath);
-        if (!file) continue;
-        if (file instanceof TFolder && (targetFolder.path === itemPath || targetFolder.path.startsWith(itemPath + "/"))) {
-          failed.push(file.name);
-          continue;
-        }
-        const targetPath = normalizePath(detail.toPath ? detail.toPath + "/" + file.name : file.name);
-        if (targetPath === file.path) continue;
-        try {
-          await renameItem(file, targetPath);
-          movedNames.push(file.name);
-        } catch (error) {
-          console.error("Failed to move " + itemPath, error);
-          failed.push(file.name);
-        }
-      }
-      // Successful renames are already persisted by the plugin's vault listener.
-      settings = getSettings();
-      if (!alphabetical && movedNames.length > 0 && !settings.archivedPaths.includes(detail.toPath)) {
-        const orderedNames = sortWithOrder([...targetFolder.children], settings.orderMap, detail.toPath)
-          .map(child => child.name).filter(name => !movedNames.includes(name));
-        const anchorIndex = anchorName ? orderedNames.indexOf(anchorName) : -1;
-        orderedNames.splice(anchorIndex >= 0 ? anchorIndex : orderedNames.length, 0, ...movedNames);
-        settings = { ...settings, orderMap: { ...settings.orderMap, [detail.toPath]: orderedNames } };
+    // The vault rename listener may already have updated ordering and other metadata.
+    settings = getSettings();
+    if (manual && placedNames.length) {
+      const placed = new Set(placedNames);
+      const current = sortWithOrder(targetFolder.children, settings.orderMap, toPath).map(child => child.name);
+      const orderedNames = current.filter(name => !placed.has(name));
+      const anchorIndex = anchorName ? orderedNames.indexOf(anchorName) : -1;
+      orderedNames.splice(anchorIndex >= 0 ? anchorIndex : orderedNames.length, 0, ...placed);
+      if (orderedNames.some((name, index) => name !== current[index])) {
+        settings = { ...settings, orderMap: { ...settings.orderMap, [toPath]: orderedNames } };
         await onUpdateSettings(settings);
       }
-      clearSelection();
-      if (failed.length > 0) new Notice("Could not move: " + failed.join(", "));
-
     }
+    if (moved) clearSelection();
+    if (failed.length > 0) new Notice("Could not move: " + failed.join(", "));
   }
 
   async function createNote() {
@@ -723,7 +675,6 @@
     }
     destroyDropIndicator();
     document.body.classList.remove("sn-is-dragging");
-    dragState.fromPath = "";
     dragState.itemPath = "";
     dragState.batchPaths = [];
     dragState.targetFolder = null;

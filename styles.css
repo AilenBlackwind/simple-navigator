@@ -93,6 +93,7 @@ body.sn-is-dragging .workspace-header {
   top: 0;
   bottom: 0;
   width: max(var(--guide-active-width, 0px), var(--guide-width, 1px));
+  transform: translateX(-50%);
   background-color: var(--collapse-icon-color, var(--text-faint));
   opacity: var(--guide-active-opacity, 0.85);
   pointer-events: none;
@@ -103,6 +104,23 @@ body.sn-is-dragging .workspace-header {
   background-color: var(--sn-color);
 }
 
+.simple-navigator-tree .nav-folder.sn-drop-target > .nav-folder-children::before {
+  width: max(var(--guide-active-width, 0px), calc(var(--guide-width, 1px) * 2.2));
+  background-color: var(--sn-color, var(--interactive-accent));
+  animation: sn-guide-pulse 0.8s ease-in-out infinite;
+}
+
+@keyframes sn-guide-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .simple-navigator-tree .nav-folder.sn-drop-target > .nav-folder-children::before {
+    animation: none;
+    opacity: 1;
+  }
+}
 
 .simple-navigator-tree .nav-file-icon,
 .simple-navigator-tree .nav-folder-icon {
@@ -203,17 +221,6 @@ body.sn-is-dragging .workspace-header {
   margin: 0 !important;
   padding: 0 !important;
   border: 0 !important;
-  display: block !important;
-}
-
-@keyframes sn-guide-pulse {
-  0%, 100% { transform: scaleX(1); opacity: 0.25; }
-  50% { transform: scaleX(2.5); opacity: 0.6; }
-}
-
-.sn-guide-line-anim {
-  animation: sn-guide-pulse 0.8s ease-in-out infinite;
-  transform-origin: center;
 }
 
 .simple-navigator-tree .sn-link-target {

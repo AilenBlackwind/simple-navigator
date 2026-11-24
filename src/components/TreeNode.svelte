@@ -3,7 +3,7 @@
   import type { App, TAbstractFile } from "obsidian";
   import { sortWithOrder, defaultSortFn, countFiles, getFileIcon, getVisibleExtSet, deleteFile, appendWikiLinksToNote } from "../utils";
   import { setCustomIcon } from "../icon-utils";
-  import { dragState, createDropIndicator, removeDropIndicator, destroyDropIndicator, updateMoveDrop, updateAutoScroll, highlightLinkTarget, clearLinkTargetHighlight } from "../drag-state";
+  import { dragState, getDragBatchPaths, createDropIndicator, removeDropIndicator, destroyDropIndicator, updateMoveDrop, updateAutoScroll, highlightLinkTarget, clearLinkTargetHighlight } from "../drag-state";
   import type { PluginSettings } from "../settings";
   import { matchingMenuProfile, appendProfileCommands } from "../menu-profiles";
   import { IconSuggestModal, MoveToModal } from "../modal";
@@ -22,9 +22,7 @@ import { showConfirmModal } from "../confirm-modal";
   export let onExpandDropFolder: (path: string) => void;
   export let onResetFolderOrder: (path: string) => Promise<void>;
   export let onSortEnd: (detail: {
-    fromPath: string;
     toPath: string;
-    oldIndex: number;
     newIndex: number;
     itemPath: string;
     batchPaths?: string[];
@@ -143,8 +141,8 @@ import { showConfirmModal } from "../confirm-modal";
   function handleClick(e: MouseEvent) {
     if (Date.now() - dragState.lastDropTime < 300) return;
     if (editingPath === file.path) return;
-    if (e.shiftKey || e.ctrlKey) {
-      onSelect(file.path, e.shiftKey, e.ctrlKey);
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      onSelect(file.path, e.shiftKey, e.ctrlKey || e.metaKey);
       return;
     }
     onClearSelection();
@@ -693,47 +691,26 @@ import { showConfirmModal } from "../confirm-modal";
   }
 
   function handleDragStart(e: DragEvent) {
-    document.body.classList.add("sn-is-dragging");
     const title = e.currentTarget as HTMLElement;
-    const container = title.closest("[data-folder-path]") as HTMLElement | null;
-    const itemEl = title.closest(".nav-folder, .nav-file") as HTMLElement | null;
-    if (!container || !itemEl) return;
+    const tree = title.closest(".simple-navigator-tree");
+    if (!tree || !e.dataTransfer) return;
+    document.body.classList.add("sn-is-dragging");
 
-    const itemPath = itemEl.dataset.path || "";
-    const fromPath = container.dataset.folderPath || "";
-    const parent = itemEl.parentElement;
-    let oldIndex = -1;
-    if (parent) {
-      const children = Array.from(parent.children);
-      oldIndex = children.indexOf(itemEl);
-    }
-
-    dragState.fromPath = fromPath;
+    const itemPath = file.path;
     dragState.itemPath = itemPath;
-    dragState.oldIndex = oldIndex;
     dragState.targetFolder = null;
     dragState.toPath = "";
     dragState.newIndex = -1;
 
-    const sameParentSelected = Array.from(selectedPaths).filter(p => {
-      const pp = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
-      return pp === fromPath;
-    });
-    const batchSet = new Set(sameParentSelected);
-    batchSet.add(itemPath);
-    if (batchSet.size >= 2) {
-      const domChildren = Array.from(container.children);
-      dragState.batchPaths = Array.from(batchSet).sort((a, b) => {
-        const aEl = domChildren.find(el => (el as HTMLElement).dataset.path === a);
-        const bEl = domChildren.find(el => (el as HTMLElement).dataset.path === b);
-        return aEl && bEl ? Array.from(domChildren).indexOf(aEl) - Array.from(domChildren).indexOf(bEl) : 0;
-      });
+    if (selectedPaths.has(itemPath)) {
+      const visiblePaths = Array.from(tree.querySelectorAll<HTMLElement>('[role="treeitem"][data-path]'), row => row.dataset.path!);
+      dragState.batchPaths = getDragBatchPaths(itemPath, visiblePaths, selectedPaths);
     } else {
       dragState.batchPaths = [];
     }
 
-    e.dataTransfer!.effectAllowed = "copyMove";
-    e.dataTransfer!.setData("text/plain", itemPath);
+    e.dataTransfer.effectAllowed = "copyMove";
+    e.dataTransfer.setData("text/plain", itemPath);
 
     const color = settings.colorMap[itemPath] || "var(--text-faint)";
     createDropIndicator(color);
@@ -786,7 +763,6 @@ import { showConfirmModal } from "../confirm-modal";
       const targetPath = dragState.linkTarget;
       const items = dragState.batchPaths.length > 0 ? dragState.batchPaths : [dragState.itemPath];
       dragState.itemPath = "";
-      dragState.fromPath = "";
       dragState.batchPaths = [];
       dragState.linkTarget = null;
       document.body.classList.remove("sn-is-dragging");
@@ -796,9 +772,7 @@ import { showConfirmModal } from "../confirm-modal";
 
     dragState.linkTarget = null;
 
-    const fromPath = dragState.fromPath;
     const itemPath = dragState.itemPath;
-    const oldIndex = dragState.oldIndex;
     const batchPaths = dragState.batchPaths.length > 0 ? dragState.batchPaths : undefined;
 
     // Capture the target before clearing the shared drag state.
@@ -806,12 +780,11 @@ import { showConfirmModal } from "../confirm-modal";
     const newIndex = dragState.targetFolder ? -1 : dragState.newIndex;
     const hasTarget = !!dragState.targetFolder || dragState.toPath !== "" || dragState.newIndex >= 0;
     dragState.itemPath = "";
-    dragState.fromPath = "";
     dragState.batchPaths = [];
     document.body.classList.remove("sn-is-dragging");
     try {
       if (hasTarget) {
-        await onSortEnd({ fromPath, toPath, oldIndex, newIndex, itemPath, batchPaths });
+        await onSortEnd({ toPath, newIndex, itemPath, batchPaths });
       }
     } catch (error) {
       console.error("Drop failed:", error);

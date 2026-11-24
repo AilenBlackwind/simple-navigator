@@ -2,9 +2,7 @@ import { normalizePath } from "obsidian";
 import type { PluginSettings } from "./settings";
 
 export const dragState: {
-  fromPath: string;
   itemPath: string;
-  oldIndex: number;
   targetFolder: string | null;
   toPath: string;
   newIndex: number;
@@ -12,9 +10,7 @@ export const dragState: {
   batchPaths: string[];
   linkTarget: string | null;
 } = {
-  fromPath: "",
   itemPath: "",
-  oldIndex: -1,
   targetFolder: null,
   toPath: "",
   newIndex: -1,
@@ -24,6 +20,19 @@ export const dragState: {
 };
 
 let dropIndicatorEl: HTMLDivElement | null = null;
+
+export function getDragBatchPaths(itemPath: string, visiblePaths: string[], selectedPaths: Set<string>): string[] {
+  if (!selectedPaths.has(itemPath)) return [];
+  const included = new Set(visiblePaths.filter(path => selectedPaths.has(path)));
+  const batch = Array.from(included).filter(path => {
+    // Moving a selected folder already carries its selected descendants.
+    for (let i = path.lastIndexOf("/"); i > 0; i = path.lastIndexOf("/", i - 1)) {
+      if (included.has(path.slice(0, i))) return false;
+    }
+    return true;
+  });
+  return batch.length === 1 && batch[0] === itemPath ? [] : batch;
+}
 
 export function createDropIndicator(color: string) {
   document.querySelectorAll(".sn-drop-indicator").forEach((el) => el.remove());
@@ -35,7 +44,7 @@ export function createDropIndicator(color: string) {
   dropIndicatorEl.style.pointerEvents = "none";
   dropIndicatorEl.style.zIndex = "1000";
   dropIndicatorEl.style.backgroundColor = color || "var(--text-faint)";
-  dropIndicatorEl.style.display = "block";
+  dropIndicatorEl.style.display = "none";
   document.body.appendChild(dropIndicatorEl);
 }
 
@@ -55,7 +64,7 @@ function updateDropIndicator(relatedEl: HTMLElement, after: boolean) {
   dropIndicatorEl.style.display = "block";
 }
 
-let guideLineAnimEl: HTMLDivElement | null = null;
+let highlightedFolder: HTMLElement | null = null;
 let expandTimer: ReturnType<typeof setTimeout> | undefined;
 let expandTarget: HTMLElement | null = null;
 let expandPointerY = 0;
@@ -84,56 +93,16 @@ function scheduleDropExpansion(target: DropTarget, tree: Element, y: number, exp
   }, 600);
 }
 
-function ensureGuideLineEl(): HTMLDivElement {
-  if (guideLineAnimEl?.isConnected) return guideLineAnimEl;
-  guideLineAnimEl = document.createElement("div");
-  guideLineAnimEl.className = "sn-guide-line-anim";
-  guideLineAnimEl.style.position = "fixed";
-  guideLineAnimEl.style.pointerEvents = "none";
-  guideLineAnimEl.style.zIndex = "100";
-  guideLineAnimEl.style.visibility = "hidden";
-  document.body.appendChild(guideLineAnimEl);
-  return guideLineAnimEl;
+function clearFolderHighlight() {
+  highlightedFolder?.classList.remove("sn-drop-target");
+  highlightedFolder = null;
 }
 
-function hideGuideLineAnim() {
-  if (guideLineAnimEl) guideLineAnimEl.style.visibility = "hidden";
-}
-
-export function clearFolderHighlight() {
-  hideGuideLineAnim();
-  document.querySelectorAll(".sn-drop-target").forEach(el => el.classList.remove("sn-drop-target"));
-}
-
-export function highlightFolder(el: HTMLElement) {
+function highlightFolder(el: HTMLElement) {
+  if (el === highlightedFolder) return;
   clearFolderHighlight();
+  highlightedFolder = el;
   el.classList.add("sn-drop-target");
-  const title = el.querySelector(".nav-folder-title") as HTMLElement | null;
-  const snColor = title?.style.getPropertyValue("--sn-color").trim();
-
-  const childrenContainer = el.querySelector(".nav-folder-children") as HTMLElement | null;
-  const tree = el.closest(".simple-navigator-tree") as HTMLElement | null;
-  if (tree && childrenContainer && childrenContainer.offsetHeight > 0) {
-    const guideOffset = parseFloat(childrenContainer.style.getPropertyValue("--guide-offset") || "24");
-    const ccRect = childrenContainer.getBoundingClientRect();
-    const treeRect = tree.getBoundingClientRect();
-
-    const desiredTop = ccRect.top;
-    const desiredBottom = ccRect.top + ccRect.height;
-    const clampedTop = Math.max(desiredTop, treeRect.top);
-    const clampedBottom = Math.min(desiredBottom, treeRect.bottom);
-    const clampedHeight = clampedBottom - clampedTop;
-
-    if (clampedHeight > 0) {
-      const anim = ensureGuideLineEl();
-      anim.style.visibility = "visible";
-      anim.style.left = `${Math.round(ccRect.left + guideOffset)}px`;
-      anim.style.top = `${Math.round(clampedTop)}px`;
-      anim.style.height = `${Math.round(clampedHeight)}px`;
-      anim.style.backgroundColor = snColor || "var(--text-faint)";
-      anim.style.width = (1 / window.devicePixelRatio) + "px";
-    }
-  }
 }
 
 export function removeDropIndicator() {
@@ -149,11 +118,6 @@ export function destroyDropIndicator() {
   cancelDropExpansion();
   stopDragScroll();
   clearFolderHighlight();
-  hideGuideLineAnim();
-  if (guideLineAnimEl) {
-    guideLineAnimEl.remove();
-    guideLineAnimEl = null;
-  }
   if (dropIndicatorEl) {
     dropIndicatorEl.remove();
     dropIndicatorEl = null;

@@ -607,13 +607,38 @@ test('partial batch move retains successful metadata, preserves hidden target or
       current = drag.updatePathsOnMove(current, old, target); persisted.push(plain(current));
     }, onUpdateSettings: async next => { current = next; persisted.push(plain(next)); }
   });
-  await context.handleSortEnd({ fromPath: 'Src', toPath: 'Dest', itemPath: a.path,
-    batchPaths: [a.path, b.path, c.path], oldIndex: 0, newIndex: 0 });
+  await context.handleSortEnd({ toPath: 'Dest', itemPath: a.path,
+    batchPaths: [a.path, b.path, c.path], newIndex: 0 });
   assert.equal(a.path, 'Dest/A.md'); assert.equal(b.path, 'Src/B.md'); assert.equal(c.path, 'Dest/C.md');
   assert.equal(current.colorMap[a.path], 'red'); assert.equal(current.colorMap['Src/A.md'], undefined);
   assert.deepEqual(plain(current.orderMap.Src), ['B.md']);
   assert.deepEqual(plain(current.orderMap.Dest), ['Hidden.md', 'A.md', 'C.md', 'Existing.md']);
   assert.equal(persisted.at(-1).colorMap[a.path], 'red');
+});
+
+test('a group grabbed from the destination still moves other members and inserts them at the visible marker', async () => {
+  const a = new TFile('Left/A.md'), b = new TFile('Dest/B.md'), c = new TFile('Right/C.md');
+  const hidden = new TFile('Dest/Hidden.md'), marker = new TFile('Dest/Marker.md');
+  const left = new TFolder('Left', [a]), dest = new TFolder('Dest', [hidden, b, marker]);
+  const right = new TFolder('Right', [c]);
+  const files = [left, dest, right, a, b, c, hidden, marker];
+  let current = { ...settings(), hiddenPaths: [hidden.path], orderMap: { Dest: ['Hidden.md', 'B.md', 'Marker.md'] } };
+  const renamed = [];
+  const context = componentFunctions('src/components/TreeView.svelte', ['handleSortEnd'], {
+    showHidden: false, sortWithOrder: utils.sortWithOrder, clearSelection() {}, getSettings: () => current,
+    app: { vault: { getAbstractFileByPath: path => files.find(file => file.path === path) } },
+    renameItem: async (file, path) => {
+      renamed.push(file.path);
+      current = drag.updatePathsOnMove(current, file.path, path);
+      file.parent.children = file.parent.children.filter(child => child !== file);
+      file.path = path;
+      file.parent = dest;
+      dest.children.push(file);
+    }, onUpdateSettings: async next => { current = next; }
+  });
+  await context.handleSortEnd({ toPath: 'Dest', itemPath: b.path, batchPaths: [a.path, b.path, c.path], newIndex: 0 });
+  assert.deepEqual(renamed, ['Left/A.md', 'Right/C.md']);
+  assert.deepEqual(plain(current.orderMap.Dest), ['Hidden.md', 'A.md', 'B.md', 'C.md', 'Marker.md']);
 });
 
 test('auto-reveal updates active file and expands ancestors, including initial opening', async () => {
@@ -679,11 +704,13 @@ test('keyboard navigation opens folders, moves between rows and leaves rename ke
   let expanded = false;
   const note = Object.assign(new Element(), {
     dataset: { path: 'Folder/Note.md' }, matches: () => true,
+    classList: { contains: name => name === 'nav-file' },
     getAttribute: () => null, parentElement: { closest: () => folder },
     firstElementChild: { click: () => actions.push('open'), dispatchEvent: event => actions.push(event.type) }
   });
   const folder = Object.assign(new Element(), {
     dataset: { path: 'Folder' }, matches: () => true, firstElementChild: {},
+    classList: { contains: () => false },
     getAttribute: () => String(expanded), querySelector: () => note
   });
   const input = Object.assign(new Element(), { matches: () => false });
@@ -705,4 +732,40 @@ test('keyboard navigation opens folders, moves between rows and leaves rename ke
   press(note, 'ArrowLeft');
   press(folder, 'ArrowLeft');
   assert.deepEqual(actions, ['Folder', ['Folder', true], 'Folder/Note.md', 'open', 'sn-rename', 'Folder', ['Folder', false]]);
+});
+
+test('Shift uses a stable visible-file anchor, skips folders and shrinks the range', () => {
+  const row = (path, file = true) => ({ dataset: { path }, classList: { contains: () => file } });
+  const a = row('A.md'), folder = row('Folder', false), b = row('Folder/B.md'), c = row('C.md'), d = row('D.md');
+  let visible = [a, folder, b, c, d];
+  const context = componentFunctions('src/components/TreeView.svelte', ['handleSelect', 'clearSelection'], {
+    selectionAnchorPath: null, selectedPaths: new Set(), focusRow() {},
+    rowForPath: path => visible.find(item => item.dataset.path === path),
+    treeEl: { querySelectorAll: () => visible.filter(item => item.classList.contains('nav-file')) }
+  });
+  const paths = () => Array.from(context.selectedPaths);
+  context.handleSelect(a.dataset.path, true, false);
+  assert.deepEqual(paths(), ['A.md']);
+  context.handleSelect(d.dataset.path, true, false);
+  assert.deepEqual(paths(), ['A.md', 'Folder/B.md', 'C.md', 'D.md']);
+  context.handleSelect(b.dataset.path, true, false);
+  assert.deepEqual(paths(), ['A.md', 'Folder/B.md']);
+  context.handleSelect(folder.dataset.path, false, true);
+  assert.ok(paths().includes('Folder'));
+  context.handleSelect(b.dataset.path, false, true);
+  context.handleSelect(c.dataset.path, true, false);
+  assert.deepEqual(paths(), ['Folder/B.md', 'C.md']);
+  visible = [a, folder, c, d];
+  context.handleSelect(d.dataset.path, true, false);
+  assert.deepEqual(paths(), ['D.md']);
+  assert.equal(context.selectionAnchorPath, 'D.md');
+});
+
+test('dragging a selected row uses the visible selection in tree order without duplicating folder contents', () => {
+  const visible = ['Left/A.md', 'Left/B.md', 'Right', 'Right/C.md', 'Right/Extra.md', 'Separate.md'];
+  const selected = new Set(['Right/C.md', 'Left/B.md', 'Right', 'Hidden.md']);
+  const batch = path => plain(drag.getDragBatchPaths(path, visible, selected));
+  assert.deepEqual(batch('Left/B.md'), ['Left/B.md', 'Right']);
+  assert.deepEqual(batch('Right/C.md'), ['Left/B.md', 'Right']);
+  assert.deepEqual(batch('Left/A.md'), []);
 });

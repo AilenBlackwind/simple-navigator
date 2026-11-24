@@ -38,8 +38,10 @@ context menu.
 - **Configurable context menus.** Keep ordinary right-click short and assign
   separate menus to Ctrl/Alt/Shift/Meta combinations. Each profile has its own
   navigator actions, named submenus, and Obsidian commands.
-- **Multi-select.** Shift-click for ranges, Ctrl/Cmd-click to toggle individual
-  items; Delete/Backspace removes the selection.
+- **Multi-select.** Shift-click or Shift+Up/Down selects a range of visible
+  files. Ctrl/Cmd-click toggles files and folders individually. Drag a selected
+  item to move the visible selection in tree order, even across folders.
+  Delete/Backspace removes the selection.
 - **Auto-reveal.** Optionally expand parents of the active file and scroll its
   row into view. Use **Reveal active file in navigator** from the command palette
   to reveal and briefly highlight it once.

@@ -1113,9 +1113,7 @@ init_icon_utils();
 // src/drag-state.ts
 var import_obsidian3 = require("obsidian");
 var dragState = {
-  fromPath: "",
   itemPath: "",
-  oldIndex: -1,
   targetFolder: null,
   toPath: "",
   newIndex: -1,
@@ -1124,6 +1122,19 @@ var dragState = {
   linkTarget: null
 };
 var dropIndicatorEl = null;
+function getDragBatchPaths(itemPath, visiblePaths, selectedPaths) {
+  if (!selectedPaths.has(itemPath))
+    return [];
+  const included = new Set(visiblePaths.filter((path) => selectedPaths.has(path)));
+  const batch = Array.from(included).filter((path) => {
+    for (let i = path.lastIndexOf("/"); i > 0; i = path.lastIndexOf("/", i - 1)) {
+      if (included.has(path.slice(0, i)))
+        return false;
+    }
+    return true;
+  });
+  return batch.length === 1 && batch[0] === itemPath ? [] : batch;
+}
 function createDropIndicator(color) {
   document.querySelectorAll(".sn-drop-indicator").forEach((el) => el.remove());
   dropIndicatorEl = document.createElement("div");
@@ -1134,7 +1145,7 @@ function createDropIndicator(color) {
   dropIndicatorEl.style.pointerEvents = "none";
   dropIndicatorEl.style.zIndex = "1000";
   dropIndicatorEl.style.backgroundColor = color || "var(--text-faint)";
-  dropIndicatorEl.style.display = "block";
+  dropIndicatorEl.style.display = "none";
   document.body.appendChild(dropIndicatorEl);
 }
 function updateDropIndicator(relatedEl, after) {
@@ -1154,7 +1165,7 @@ function updateDropIndicator(relatedEl, after) {
   dropIndicatorEl.style.width = `${width}px`;
   dropIndicatorEl.style.display = "block";
 }
-var guideLineAnimEl = null;
+var highlightedFolder = null;
 var expandTimer;
 var expandTarget = null;
 var expandPointerY = 0;
@@ -1183,52 +1194,16 @@ function scheduleDropExpansion(target, tree, y, expand) {
       expand(path);
   }, 600);
 }
-function ensureGuideLineEl() {
-  if (guideLineAnimEl == null ? void 0 : guideLineAnimEl.isConnected)
-    return guideLineAnimEl;
-  guideLineAnimEl = document.createElement("div");
-  guideLineAnimEl.className = "sn-guide-line-anim";
-  guideLineAnimEl.style.position = "fixed";
-  guideLineAnimEl.style.pointerEvents = "none";
-  guideLineAnimEl.style.zIndex = "100";
-  guideLineAnimEl.style.visibility = "hidden";
-  document.body.appendChild(guideLineAnimEl);
-  return guideLineAnimEl;
-}
-function hideGuideLineAnim() {
-  if (guideLineAnimEl)
-    guideLineAnimEl.style.visibility = "hidden";
-}
 function clearFolderHighlight() {
-  hideGuideLineAnim();
-  document.querySelectorAll(".sn-drop-target").forEach((el) => el.classList.remove("sn-drop-target"));
+  highlightedFolder == null ? void 0 : highlightedFolder.classList.remove("sn-drop-target");
+  highlightedFolder = null;
 }
 function highlightFolder(el) {
+  if (el === highlightedFolder)
+    return;
   clearFolderHighlight();
+  highlightedFolder = el;
   el.classList.add("sn-drop-target");
-  const title = el.querySelector(".nav-folder-title");
-  const snColor = title == null ? void 0 : title.style.getPropertyValue("--sn-color").trim();
-  const childrenContainer = el.querySelector(".nav-folder-children");
-  const tree = el.closest(".simple-navigator-tree");
-  if (tree && childrenContainer && childrenContainer.offsetHeight > 0) {
-    const guideOffset = parseFloat(childrenContainer.style.getPropertyValue("--guide-offset") || "24");
-    const ccRect = childrenContainer.getBoundingClientRect();
-    const treeRect = tree.getBoundingClientRect();
-    const desiredTop = ccRect.top;
-    const desiredBottom = ccRect.top + ccRect.height;
-    const clampedTop = Math.max(desiredTop, treeRect.top);
-    const clampedBottom = Math.min(desiredBottom, treeRect.bottom);
-    const clampedHeight = clampedBottom - clampedTop;
-    if (clampedHeight > 0) {
-      const anim = ensureGuideLineEl();
-      anim.style.visibility = "visible";
-      anim.style.left = `${Math.round(ccRect.left + guideOffset)}px`;
-      anim.style.top = `${Math.round(clampedTop)}px`;
-      anim.style.height = `${Math.round(clampedHeight)}px`;
-      anim.style.backgroundColor = snColor || "var(--text-faint)";
-      anim.style.width = 1 / window.devicePixelRatio + "px";
-    }
-  }
 }
 function removeDropIndicator() {
   cancelDropExpansion();
@@ -1242,11 +1217,6 @@ function destroyDropIndicator() {
   cancelDropExpansion();
   stopDragScroll();
   clearFolderHighlight();
-  hideGuideLineAnim();
-  if (guideLineAnimEl) {
-    guideLineAnimEl.remove();
-    guideLineAnimEl = null;
-  }
   if (dropIndicatorEl) {
     dropIndicatorEl.remove();
     dropIndicatorEl = null;
@@ -4664,8 +4634,8 @@ function instance($$self, $$props, $$invalidate) {
       return;
     if (editingPath === file.path)
       return;
-    if (e.shiftKey || e.ctrlKey) {
-      onSelect(file.path, e.shiftKey, e.ctrlKey);
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      onSelect(file.path, e.shiftKey, e.ctrlKey || e.metaKey);
       return;
     }
     onClearSelection();
@@ -5157,39 +5127,19 @@ function instance($$self, $$props, $$invalidate) {
     menu.showAtMouseEvent(event);
   }
   function handleDragStart(e) {
-    document.body.classList.add("sn-is-dragging");
     const title = e.currentTarget;
-    const container = title.closest("[data-folder-path]");
-    const itemEl = title.closest(".nav-folder, .nav-file");
-    if (!container || !itemEl)
+    const tree = title.closest(".simple-navigator-tree");
+    if (!tree || !e.dataTransfer)
       return;
-    const itemPath = itemEl.dataset.path || "";
-    const fromPath = container.dataset.folderPath || "";
-    const parent = itemEl.parentElement;
-    let oldIndex = -1;
-    if (parent) {
-      const children3 = Array.from(parent.children);
-      oldIndex = children3.indexOf(itemEl);
-    }
-    dragState.fromPath = fromPath;
+    document.body.classList.add("sn-is-dragging");
+    const itemPath = file.path;
     dragState.itemPath = itemPath;
-    dragState.oldIndex = oldIndex;
     dragState.targetFolder = null;
     dragState.toPath = "";
     dragState.newIndex = -1;
-    const sameParentSelected = Array.from(selectedPaths).filter((p) => {
-      const pp = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
-      return pp === fromPath;
-    });
-    const batchSet = new Set(sameParentSelected);
-    batchSet.add(itemPath);
-    if (batchSet.size >= 2) {
-      const domChildren = Array.from(container.children);
-      dragState.batchPaths = Array.from(batchSet).sort((a, b) => {
-        const aEl = domChildren.find((el) => el.dataset.path === a);
-        const bEl = domChildren.find((el) => el.dataset.path === b);
-        return aEl && bEl ? Array.from(domChildren).indexOf(aEl) - Array.from(domChildren).indexOf(bEl) : 0;
-      });
+    if (selectedPaths.has(itemPath)) {
+      const visiblePaths = Array.from(tree.querySelectorAll('[role="treeitem"][data-path]'), (row) => row.dataset.path);
+      dragState.batchPaths = getDragBatchPaths(itemPath, visiblePaths, selectedPaths);
     } else {
       dragState.batchPaths = [];
     }
@@ -5242,7 +5192,6 @@ function instance($$self, $$props, $$invalidate) {
         const targetPath = dragState.linkTarget;
         const items = dragState.batchPaths.length > 0 ? dragState.batchPaths : [dragState.itemPath];
         dragState.itemPath = "";
-        dragState.fromPath = "";
         dragState.batchPaths = [];
         dragState.linkTarget = null;
         document.body.classList.remove("sn-is-dragging");
@@ -5250,27 +5199,17 @@ function instance($$self, $$props, $$invalidate) {
         return;
       }
       dragState.linkTarget = null;
-      const fromPath = dragState.fromPath;
       const itemPath = dragState.itemPath;
-      const oldIndex = dragState.oldIndex;
       const batchPaths = dragState.batchPaths.length > 0 ? dragState.batchPaths : void 0;
       const toPath = (_a2 = dragState.targetFolder) !== null && _a2 !== void 0 ? _a2 : dragState.toPath;
       const newIndex = dragState.targetFolder ? -1 : dragState.newIndex;
       const hasTarget = !!dragState.targetFolder || dragState.toPath !== "" || dragState.newIndex >= 0;
       dragState.itemPath = "";
-      dragState.fromPath = "";
       dragState.batchPaths = [];
       document.body.classList.remove("sn-is-dragging");
       try {
         if (hasTarget) {
-          yield onSortEnd({
-            fromPath,
-            toPath,
-            oldIndex,
-            newIndex,
-            itemPath,
-            batchPaths
-          });
+          yield onSortEnd({ toPath, newIndex, itemPath, batchPaths });
         }
       } catch (error) {
         console.error("Drop failed:", error);
@@ -6171,44 +6110,45 @@ function instance2($$self, $$props, $$invalidate) {
   let activeFilePath = "";
   let activeFileRef;
   let selectedPaths = /* @__PURE__ */ new Set();
-  let lastClickedPath = null;
+  let selectionAnchorPath = null;
   function rowForPath(path) {
     return treeEl === null || treeEl === void 0 ? void 0 : treeEl.querySelector(`[role="treeitem"][data-path="${CSS.escape(path)}"]`);
   }
-  function handleSelect(path, shiftKey, ctrlKey) {
+  function handleSelect(path, range, toggle, fallbackAnchor) {
     const row = rowForPath(path);
-    if (row)
-      focusRow(row, false);
-    if (shiftKey && lastClickedPath) {
-      const container = treeEl;
-      if (container) {
-        const allItems = container.querySelectorAll(".nav-folder[data-path], .nav-file[data-path]");
-        const paths = Array.from(allItems).map((el) => el.dataset.path || "").filter(Boolean);
-        const lastIdx = paths.indexOf(lastClickedPath);
-        const curIdx = paths.indexOf(path);
-        if (lastIdx !== -1 && curIdx !== -1) {
-          const start = Math.min(lastIdx, curIdx);
-          const end = Math.max(lastIdx, curIdx);
-          $$invalidate(11, selectedPaths = new Set(paths.slice(start, end + 1)));
-        } else {
-          $$invalidate(11, selectedPaths = /* @__PURE__ */ new Set([path]));
-        }
-      } else {
+    if (!row)
+      return;
+    focusRow(row, range);
+    const isFile = row.classList.contains("nav-file");
+    if (range) {
+      if (!isFile)
+        return;
+      const paths = Array.from(treeEl.querySelectorAll(".nav-file[data-path]"), (item) => item.dataset.path);
+      const anchor = selectionAnchorPath !== null && selectionAnchorPath !== void 0 ? selectionAnchorPath : fallbackAnchor;
+      const targetIndex = paths.indexOf(path);
+      if (targetIndex < 0)
+        return;
+      const anchorIndex = anchor ? paths.indexOf(anchor) : -1;
+      if (anchorIndex < 0) {
+        selectionAnchorPath = path;
         $$invalidate(11, selectedPaths = /* @__PURE__ */ new Set([path]));
+        return;
       }
-    } else if (ctrlKey) {
-      if (selectedPaths.has(path)) {
-        selectedPaths.delete(path);
-      } else {
-        selectedPaths.add(path);
-      }
-      $$invalidate(11, selectedPaths = new Set(selectedPaths));
+      selectionAnchorPath = paths[anchorIndex];
+      $$invalidate(11, selectedPaths = new Set(paths.slice(Math.min(anchorIndex, targetIndex), Math.max(anchorIndex, targetIndex) + 1)));
     } else {
-      lastClickedPath = path;
+      selectionAnchorPath = isFile ? path : null;
+      if (toggle) {
+        const next = new Set(selectedPaths);
+        if (!next.delete(path))
+          next.add(path);
+        $$invalidate(11, selectedPaths = next);
+      }
     }
   }
   function clearSelection() {
     $$invalidate(11, selectedPaths = /* @__PURE__ */ new Set());
+    selectionAnchorPath = null;
   }
   function handleTreeKeydown(event) {
     var _a, _b, _c, _d;
@@ -6232,8 +6172,17 @@ function instance2($$self, $$props, $$invalidate) {
     const index = rows.indexOf(target);
     const path = target.dataset.path;
     const title = path ? target.firstElementChild : null;
+    const extend = event.shiftKey && (key === "ArrowDown" || key === "ArrowUp");
     let next;
-    if (key === "ArrowDown")
+    if (extend) {
+      const step = key === "ArrowDown" ? 1 : -1;
+      for (let i = index < 0 && step < 0 ? rows.length - 1 : index + step; i >= 0 && i < rows.length; i += step) {
+        if (rows[i].classList.contains("nav-file")) {
+          next = rows[i];
+          break;
+        }
+      }
+    } else if (key === "ArrowDown")
       next = rows[Math.min(index + 1, rows.length - 1)];
     else if (key === "ArrowUp")
       next = rows[index < 0 ? rows.length - 1 : Math.max(0, index - 1)];
@@ -6254,7 +6203,6 @@ function instance2($$self, $$props, $$invalidate) {
     } else if (path && title && key === "F2")
       title.dispatchEvent(new Event("sn-rename"));
     else if (path && toggleSelection) {
-      lastClickedPath = path;
       handleSelect(path, false, true);
     } else if (title && (key === "Enter" || key === " "))
       title.click();
@@ -6274,12 +6222,10 @@ function instance2($$self, $$props, $$invalidate) {
       return;
     event.preventDefault();
     event.stopPropagation();
-    if (next && event.shiftKey && (key === "ArrowDown" || key === "ArrowUp") && path && next.dataset.path) {
-      lastClickedPath !== null && lastClickedPath !== void 0 ? lastClickedPath : lastClickedPath = path;
-      handleSelect(next.dataset.path, true, false);
-      focusRow(next);
+    if (next && extend && next.dataset.path) {
+      handleSelect(next.dataset.path, true, false, path);
     } else if (next) {
-      lastClickedPath = (_d = next.dataset.path) !== null && _d !== void 0 ? _d : null;
+      selectionAnchorPath = next.classList.contains("nav-file") ? (_d = next.dataset.path) !== null && _d !== void 0 ? _d : null : null;
       focusRow(next);
     }
   }
@@ -6298,9 +6244,7 @@ function instance2($$self, $$props, $$invalidate) {
         return;
       dragState.lastDropTime = Date.now();
       destroyDropIndicator();
-      const fromPath = dragState.fromPath;
       const itemPath = dragState.itemPath;
-      const oldIndex = dragState.oldIndex;
       const batchPaths = dragState.batchPaths.length > 0 ? dragState.batchPaths : void 0;
       const targetFolder = dragState.targetFolder;
       const toPath = dragState.toPath;
@@ -6309,22 +6253,13 @@ function instance2($$self, $$props, $$invalidate) {
       try {
         if (targetFolder) {
           yield handleSortEnd({
-            fromPath,
             toPath: targetFolder,
-            oldIndex,
             newIndex: -1,
             itemPath,
             batchPaths
           });
         } else if (toPath !== "" || newIndex >= 0) {
-          yield handleSortEnd({
-            fromPath,
-            toPath,
-            oldIndex,
-            newIndex,
-            itemPath,
-            batchPaths
-          });
+          yield handleSortEnd({ toPath, newIndex, itemPath, batchPaths });
         }
       } catch (err) {
         console.error("ROOT DROP ERROR", err);
@@ -6402,7 +6337,6 @@ function instance2($$self, $$props, $$invalidate) {
     destroyDropIndicator();
     clearLinkTargetHighlight();
     dragState.itemPath = "";
-    dragState.fromPath = "";
     dragState.batchPaths = [];
     dragState.targetFolder = null;
     dragState.toPath = "";
@@ -6434,93 +6368,60 @@ function instance2($$self, $$props, $$invalidate) {
     var _a;
     return __awaiter(this, void 0, void 0, function* () {
       const items = detail.batchPaths && detail.batchPaths.length > 0 ? detail.batchPaths : [detail.itemPath];
-      const alphabetical = getSettings().sortMode === "name-asc" || getSettings().sortMode === "name-desc";
-      if (!alphabetical && detail.fromPath === detail.toPath && detail.newIndex >= 0) {
-        if (detail.fromPath && settings.archivedPaths.includes(detail.fromPath))
-          return;
-        const container = document.querySelector(`.simple-navigator-tree [data-folder-path="${detail.fromPath}"]`);
-        if (!container) {
-          console.warn("Container not found for", detail.fromPath);
-          return;
+      const { toPath, newIndex } = detail;
+      const targetFolder = toPath ? app.vault.getAbstractFileByPath(toPath) : rootFolder;
+      if (!(targetFolder instanceof import_obsidian7.TFolder))
+        return;
+      const before = getSettings();
+      const manual = before.sortMode !== "name-asc" && before.sortMode !== "name-desc" && !before.archivedPaths.includes(toPath);
+      const insert2 = manual && newIndex >= 0;
+      const dragged = new Set(items);
+      const visibleTargets = insert2 ? sortWithOrder(targetFolder.children, before.orderMap, toPath).filter((child) => showHidden || !before.hiddenPaths.includes(child.path)) : [];
+      const anchorName = (_a = visibleTargets.slice(newIndex).find((child) => !dragged.has(child.path))) === null || _a === void 0 ? void 0 : _a.name;
+      const placedNames = [];
+      const failed = [];
+      let moved = false;
+      for (const itemPath of items) {
+        const file = app.vault.getAbstractFileByPath(itemPath);
+        if (!file)
+          continue;
+        if (file instanceof import_obsidian7.TFolder && (targetFolder.path === itemPath || targetFolder.path.startsWith(itemPath + "/"))) {
+          failed.push(file.name);
+          continue;
         }
-        const itemNames = items.map((p) => p.split("/").pop() || p);
-        let orderedNames = [];
-        for (let i = 0; i < container.children.length; i++) {
-          const child = container.children[i];
-          const path = child.dataset.path;
-          if (path) {
-            const name = path.split("/").pop();
-            if (name)
-              orderedNames.push(name);
-          }
+        const targetPath = (0, import_obsidian7.normalizePath)(toPath ? `${toPath}/${file.name}` : file.name);
+        if (targetPath === file.path) {
+          if (insert2)
+            placedNames.push(file.name);
+          continue;
         }
-        if (items.length === 1) {
-          const itemName = itemNames[0];
-          let adjustedNewIndex = detail.newIndex;
-          if (adjustedNewIndex > detail.oldIndex)
-            adjustedNewIndex--;
-          const idx = orderedNames.indexOf(itemName);
-          if (idx >= 0) {
-            orderedNames.splice(idx, 1);
-            orderedNames.splice(adjustedNewIndex, 0, itemName);
-          }
-        } else {
-          const preRemoveIndices = itemNames.map((name) => orderedNames.indexOf(name)).filter((idx) => idx >= 0);
-          const sortedDesc = [...preRemoveIndices].sort((a, b) => b - a);
-          for (const idx of sortedDesc)
-            orderedNames.splice(idx, 1);
-          const numBeforeNew = preRemoveIndices.filter((idx) => idx < detail.newIndex).length;
-          const adjustedNewIndex = Math.max(0, detail.newIndex - numBeforeNew);
-          const safeIndex = Math.min(adjustedNewIndex, orderedNames.length);
-          orderedNames.splice(safeIndex, 0, ...itemNames);
+        try {
+          yield renameItem(file, targetPath);
+          placedNames.push(file.name);
+          moved = true;
+        } catch (error) {
+          console.error("Failed to move " + itemPath, error);
+          failed.push(file.name);
         }
-        $$invalidate(0, settings = Object.assign(Object.assign({}, settings), {
-          orderMap: Object.assign(Object.assign({}, settings.orderMap), { [detail.fromPath]: orderedNames })
-        }));
-        yield onUpdateSettings(settings);
-      } else {
-        const targetFolder = detail.toPath ? app.vault.getAbstractFileByPath(detail.toPath) : rootFolder;
-        if (!(targetFolder instanceof import_obsidian7.TFolder))
-          return;
-        const before = getSettings();
-        const targetChildren = sortWithOrder([...targetFolder.children], before.orderMap, detail.toPath);
-        const visibleTargets = targetChildren.filter((child) => showHidden || !before.hiddenPaths.includes(child.path));
-        const anchorName = !alphabetical && detail.newIndex >= 0 ? (_a = visibleTargets[detail.newIndex]) === null || _a === void 0 ? void 0 : _a.name : void 0;
-        const movedNames = [];
-        const failed = [];
-        for (const itemPath of items) {
-          const file = app.vault.getAbstractFileByPath(itemPath);
-          if (!file)
-            continue;
-          if (file instanceof import_obsidian7.TFolder && (targetFolder.path === itemPath || targetFolder.path.startsWith(itemPath + "/"))) {
-            failed.push(file.name);
-            continue;
-          }
-          const targetPath = (0, import_obsidian7.normalizePath)(detail.toPath ? detail.toPath + "/" + file.name : file.name);
-          if (targetPath === file.path)
-            continue;
-          try {
-            yield renameItem(file, targetPath);
-            movedNames.push(file.name);
-          } catch (error) {
-            console.error("Failed to move " + itemPath, error);
-            failed.push(file.name);
-          }
-        }
-        $$invalidate(0, settings = getSettings());
-        if (!alphabetical && movedNames.length > 0 && !settings.archivedPaths.includes(detail.toPath)) {
-          const orderedNames = sortWithOrder([...targetFolder.children], settings.orderMap, detail.toPath).map((child) => child.name).filter((name) => !movedNames.includes(name));
-          const anchorIndex = anchorName ? orderedNames.indexOf(anchorName) : -1;
-          orderedNames.splice(anchorIndex >= 0 ? anchorIndex : orderedNames.length, 0, ...movedNames);
+      }
+      $$invalidate(0, settings = getSettings());
+      if (manual && placedNames.length) {
+        const placed = new Set(placedNames);
+        const current = sortWithOrder(targetFolder.children, settings.orderMap, toPath).map((child) => child.name);
+        const orderedNames = current.filter((name) => !placed.has(name));
+        const anchorIndex = anchorName ? orderedNames.indexOf(anchorName) : -1;
+        orderedNames.splice(anchorIndex >= 0 ? anchorIndex : orderedNames.length, 0, ...placed);
+        if (orderedNames.some((name, index) => name !== current[index])) {
           $$invalidate(0, settings = Object.assign(Object.assign({}, settings), {
-            orderMap: Object.assign(Object.assign({}, settings.orderMap), { [detail.toPath]: orderedNames })
+            orderMap: Object.assign(Object.assign({}, settings.orderMap), { [toPath]: orderedNames })
           }));
           yield onUpdateSettings(settings);
         }
-        clearSelection();
-        if (failed.length > 0)
-          new import_obsidian7.Notice("Could not move: " + failed.join(", "));
       }
+      if (moved)
+        clearSelection();
+      if (failed.length > 0)
+        new import_obsidian7.Notice("Could not move: " + failed.join(", "));
     });
   }
   function createNote() {
@@ -6788,7 +6689,6 @@ function instance2($$self, $$props, $$invalidate) {
     }
     destroyDropIndicator();
     document.body.classList.remove("sn-is-dragging");
-    dragState.fromPath = "";
     dragState.itemPath = "";
     dragState.batchPaths = [];
     dragState.targetFolder = null;
